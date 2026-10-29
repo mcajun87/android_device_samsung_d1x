@@ -48,7 +48,7 @@ jobs:
           # -c 只拉取当前分支，--no-tags 不要标签，尽可能省空间
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
-      - name: Clone Device Trees (拉取你的设备树)
+      - name: Clone Device Trees (拉取并清理设备树)
         run: |
           cd ~/fox
           mkdir -p device/samsung
@@ -56,6 +56,13 @@ jobs:
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
           # 拉取公共树
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+          
+          # ================= 核心修复 =================
+          # 暴力清理所有非 samsung 的厂牌目录（干掉小米等干扰）
+          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
+          # 确保 samsung 目录下只有 d1x 和公共树
+          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
+          # ============================================
 
       - name: Build Recovery (开始编译)
         run: |
@@ -65,8 +72,14 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           
+          # 确保环境加载时只识别到我们的 d1x 设备
           source build/envsetup.sh
+          
+          # 直接执行 lunch twrp_d1x-eng
+          echo "=== 尝试执行 lunch twrp_d1x-eng ==="
           lunch twrp_d1x-eng
+          
+          # 开始编译
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar (打包成 Odin 刷机包)
