@@ -53,29 +53,24 @@ jobs:
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
-      - name: Clone Device Trees & Fix Lunch Issues
+      - name: Clone Device Trees
         run: |
           cd ~/fox
           mkdir -p device/samsung
-          
-          # 复制你的 d1x 设备树
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
-          
-          # 拉取公共树
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
-          # 暴力清理其他厂牌干扰
+          # 暴力清理干扰
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
           
-          # 终极修复：使用 printf 强行写入，确保没有任何前导空格
-          printf "PRODUCT_MAKEFILES := \\\\\n    \$(LOCAL_DIR)/twrp_d1x.mk\n\nCOMMON_LUNCH_CHOICES := \\\\\n    twrp_d1x-eng\n" > device/samsung/d1x/AndroidProducts.mk
+          # 强行重写 AndroidProducts.mk (最标准的 AOSP 格式)
+          cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
+          PRODUCT_MAKEFILES := \
+              $(LOCAL_DIR)/twrp_d1x.mk
+          EOF
           
-          # 删除已废弃的指令
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
-          
-          echo "=== 修复后的 AndroidProducts.mk ==="
-          cat device/samsung/d1x/AndroidProducts.mk
 
       - name: Build Recovery
         run: |
@@ -87,8 +82,14 @@ jobs:
           
           source build/envsetup.sh
           
-          echo "=== 执行 lunch twrp_d1x-eng ==="
-          lunch twrp_d1x-eng
+          echo "=== 强行注入编译环境变量 ==="
+          export TARGET_PRODUCT=twrp_d1x
+          export TARGET_DEVICE=d1x
+          export TARGET_BUILD_VARIANT=eng
+          export TARGET_BOARD_PLATFORM=universal9825
+          
+          # 试着 lunch 一下，如果失败就忽略继续
+          lunch twrp_d1x-eng || true
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
@@ -101,7 +102,7 @@ jobs:
             tar -cf recovery.tar recovery.img
             md5sum recovery.tar > recovery.tar.md5
           else
-            echo "未找到 recovery.img"
+            echo "未找到 recovery.img，编译失败。"
             exit 1
           fi
 
