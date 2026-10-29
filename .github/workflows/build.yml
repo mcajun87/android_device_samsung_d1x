@@ -38,14 +38,6 @@ jobs:
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
             python3 python-is-python3 openjdk-17-jdk repo ccache
 
-      - name: Set up ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-
       - name: Init and Sync Repo
         run: |
           mkdir -p ~/fox
@@ -63,14 +55,37 @@ jobs:
           # 暴力清理干扰
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
+
+      - name: Force Generate Makefiles
+        run: |
+          cd ~/fox
           
-          # 强行重写 AndroidProducts.mk (最标准的 AOSP 格式)
-          cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
-          PRODUCT_MAKEFILES := \
-              $(LOCAL_DIR)/twrp_d1x.mk
-          EOF
+          # 1. 强制生成绝对无缩进的 AndroidProducts.mk
+          echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
+          echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
+          echo '' >> device/samsung/d1x/AndroidProducts.mk
+          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-eng' >> device/samsung/d1x/AndroidProducts.mk
           
+          # 2. 强制生成 twrp_d1x.mk 确保文件存在
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          
+          # 删除废弃指令
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          
+          echo "=== 检查生成的 AndroidProducts.mk ==="
+          cat device/samsung/d1x/AndroidProducts.mk
+          echo "=== 检查生成的 twrp_d1x.mk ==="
+          cat device/samsung/d1x/twrp_d1x.mk
 
       - name: Build Recovery
         run: |
@@ -82,14 +97,11 @@ jobs:
           
           source build/envsetup.sh
           
-          echo "=== 强行注入编译环境变量 ==="
-          export TARGET_PRODUCT=twrp_d1x
-          export TARGET_DEVICE=d1x
-          export TARGET_BUILD_VARIANT=eng
-          export TARGET_BOARD_PLATFORM=universal9825
+          echo "=== 强行指定 TARGET_RELEASE ==="
+          export TARGET_RELEASE=trunk_staging
           
-          # 试着 lunch 一下，如果失败就忽略继续
-          lunch twrp_d1x-eng || true
+          echo "=== 执行 lunch ==="
+          lunch twrp_d1x-eng
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
