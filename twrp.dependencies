@@ -1,7 +1,7 @@
 [
   {
-    "repository": "Exynos982x-OrangeFox/android_device_samsung_exynos9820-common",
+    "repository": "mcajun87/android_device_samsung_exynos9820-common",
     "target_path": "device/samsung/exynos9820-common",
-    "branch": "fox_12.1"
+    "branch": "fox_16.0"
   }
 ]
