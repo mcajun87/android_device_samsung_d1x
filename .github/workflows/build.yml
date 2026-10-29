@@ -2,18 +2,24 @@ name: Build OrangeFox 16.0 (d1x)
 run-name: Build d1x by ${{ github.actor }}
 
 on:
-  workflow_dispatch: # 允许你在网页上手动点击运行
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否发布到 Release？'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360 # 超时时间设为 6 小时
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Device Tree
         uses: actions/checkout@v4
 
-      - name: Free Disk Space (腾出最大可用空间)
+      - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: true
@@ -24,7 +30,7 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Install Dependencies (安装编译依赖)
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
@@ -32,7 +38,7 @@ jobs:
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
             python3 python-is-python3 openjdk-17-jdk repo ccache
 
-      - name: Set up ccache (开启编译缓存)
+      - name: Set up ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
@@ -40,31 +46,38 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      - name: Init and Sync Repo (同步 OrangeFox 源码)
+      - name: Init and Sync Repo
         run: |
           mkdir -p ~/fox
           cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          # -c 只拉取当前分支，--no-tags 不要标签，尽可能省空间
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
-      - name: Clone Device Trees (拉取并清理设备树)
+      - name: Clone Device Trees & Fix Lunch Issues
         run: |
           cd ~/fox
           mkdir -p device/samsung
-          # 拉取 d1x 设备树 (使用当前触发工作流的 commit)
+          
+          # 复制你的 d1x 设备树
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          
           # 拉取公共树
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
-          # ================= 核心修复 =================
-          # 暴力清理所有非 samsung 的厂牌目录（干掉小米等干扰）
+          # 暴力清理其他厂牌干扰
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
-          # 确保 samsung 目录下只有 d1x 和公共树
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
-          # ============================================
+          
+          # 终极修复：使用 printf 强行写入，确保没有任何前导空格
+          printf "PRODUCT_MAKEFILES := \\\\\n    \$(LOCAL_DIR)/twrp_d1x.mk\n\nCOMMON_LUNCH_CHOICES := \\\\\n    twrp_d1x-eng\n" > device/samsung/d1x/AndroidProducts.mk
+          
+          # 删除已废弃的指令
+          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          
+          echo "=== 修复后的 AndroidProducts.mk ==="
+          cat device/samsung/d1x/AndroidProducts.mk
 
-      - name: Build Recovery (开始编译)
+      - name: Build Recovery
         run: |
           cd ~/fox
           export ALLOW_MISSING_DEPENDENCIES=true
@@ -72,30 +85,27 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           
-          # 确保环境加载时只识别到我们的 d1x 设备
           source build/envsetup.sh
           
-          # 直接执行 lunch twrp_d1x-eng
-          echo "=== 尝试执行 lunch twrp_d1x-eng ==="
+          echo "=== 执行 lunch twrp_d1x-eng ==="
           lunch twrp_d1x-eng
           
-          # 开始编译
+          echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
 
-      - name: Package to Odin Tar (打包成 Odin 刷机包)
+      - name: Package to Odin Tar
         run: |
           cd ~/fox/out/target/product/d1x
-          # 检查 recovery.img 是否生成
           if [ -f recovery.img ]; then
-            echo "编译成功，正在打包为 Odin tar..."
+            echo "编译成功，正在打包 Odin Tar..."
             tar -cf recovery.tar recovery.img
             md5sum recovery.tar > recovery.tar.md5
           else
-            echo "未找到 recovery.img，编译可能失败。"
+            echo "未找到 recovery.img"
             exit 1
           fi
 
-      - name: Upload Artifact (上传产物)
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: OrangeFox-d1x-Recovery
@@ -104,3 +114,16 @@ jobs:
             ~/fox/out/target/product/d1x/recovery.tar
             ~/fox/out/target/product/d1x/recovery.tar.md5
           if-no-files-found: error
+
+      - name: Publish Release
+        if: github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OrangeFox-d1x-${{ github.run_id }}
+          tag_name: ${{ github.run_id }}
+          files: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
