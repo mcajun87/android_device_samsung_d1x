@@ -1,0 +1,93 @@
+name: Build OrangeFox R12.1 (d1x)
+run-name: Build R12.1 by ${{ github.actor }}
+
+on:
+  workflow_dispatch: # 允许手动点击运行
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360 # 6小时超时
+
+    steps:
+      - name: Checkout Device Tree
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space (腾出最大可用空间)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Install Dependencies (安装编译依赖，注意 JDK 11)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+            python3 python-is-python3 openjdk-11-jdk repo ccache
+
+      - name: Set up ccache (开启编译缓存)
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-fox121-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-fox121-
+
+      - name: Init and Sync Repo (同步 OrangeFox fox_12.1 源码)
+        run: |
+          mkdir -p ~/fox121
+          cd ~/fox121
+          # 注意这里是 sync.git 仓库，分支是 fox_12.1
+          repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_12.1 --depth=1
+          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
+
+      - name: Clone Device Trees (拉取你的设备树)
+        run: |
+          cd ~/fox121
+          mkdir -p device/samsung
+          # 拉取当前工作流所在的 d1x 设备树
+          cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          # 拉取公共树 (确保拉取的是 fox_12.1 分支)
+          git clone -b fox_12.1 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+
+      - name: Build Recovery (开始编译)
+        run: |
+          cd ~/fox121
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          
+          source build/envsetup.sh
+          lunch twrp_d1x-eng
+          mka recoveryimage -j$(nproc)
+
+      - name: Package to Odin Tar (打包成 Odin 刷机包)
+        run: |
+          cd ~/fox121/out/target/product/d1x
+          # 检查 recovery.img 是否生成
+          if [ -f recovery.img ]; then
+            echo "编译成功，正在打包为 Odin tar..."
+            tar -cf recovery.tar recovery.img
+            md5sum recovery.tar > recovery.tar.md5
+          else
+            echo "未找到 recovery.img，编译可能失败。"
+            exit 1
+          fi
+
+      - name: Upload Artifact (上传产物)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-R12.1-d1x-Recovery
+          path: |
+            ~/fox121/out/target/product/d1x/recovery.img
+            ~/fox121/out/target/product/d1x/recovery.tar
+            ~/fox121/out/target/product/d1x/recovery.tar.md5
+          if-no-files-found: error
