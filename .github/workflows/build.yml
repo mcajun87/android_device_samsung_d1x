@@ -52,7 +52,7 @@ jobs:
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
-          # 暴力清理干扰
+          # 清理其他设备树，防止干扰
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
@@ -60,32 +60,28 @@ jobs:
         run: |
           cd ~/fox
           
-          # 1. 强制生成绝对无缩进的 AndroidProducts.mk
-          echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
-          echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
-          echo '' >> device/samsung/d1x/AndroidProducts.mk
-          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
-          echo '    twrp_d1x-eng' >> device/samsung/d1x/AndroidProducts.mk
+          # 确保 AndroidProducts.mk 存在
+          cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
+          PRODUCT_MAKEFILES := \
+              $(LOCAL_DIR)/twrp_d1x.mk
+          EOF
           
-          # 2. 强制生成 twrp_d1x.mk 确保文件存在
-          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
-          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
-          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
-          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
-          echo '' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          # 确保 twrp_d1x.mk 存在且内容绝对正确
+          cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
+          $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
+          $(call inherit-product, vendor/twrp/config/common.mk)
+          $(call inherit-product, device/samsung/d1x/device.mk)
+
+          PRODUCT_DEVICE := d1x
+          PRODUCT_NAME := twrp_d1x
+          PRODUCT_BRAND := samsung
+          PRODUCT_MODEL := SM-N971N
+          PRODUCT_MANUFACTURER := samsung
+          EOF
           
-          # 删除废弃指令
+          # 删掉 vendorsetup.sh 里的干扰项
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
-          
-          echo "=== 检查生成的 AndroidProducts.mk ==="
-          cat device/samsung/d1x/AndroidProducts.mk
-          echo "=== 检查生成的 twrp_d1x.mk ==="
-          cat device/samsung/d1x/twrp_d1x.mk
 
       - name: Build Recovery
         run: |
@@ -95,15 +91,16 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           
+          # 加载基础环境（这样才有 mka 命令）
           source build/envsetup.sh
           
-          echo "=== 强行指定 TARGET_RELEASE ==="
-          export TARGET_RELEASE=trunk_staging
+          # 强行注入所有构建变量，彻底绕过 lunch 检查
+          export TARGET_PRODUCT=twrp_d1x
+          export TARGET_DEVICE=d1x
+          export TARGET_BUILD_VARIANT=eng
+          export TARGET_BOARD_PLATFORM=universal9825
           
-          echo "=== 执行 lunch ==="
-          lunch twrp_d1x-eng
-          
-          echo "=== 开始编译 Recovery ==="
+          echo "=== 强行开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar
