@@ -1,0 +1,171 @@
+name:Build OrangeFox 16.0 (d1x)
+run-name: Build d1x  by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否发布到 Release？'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Device Tree
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Setup Swap (防止内存爆满被强杀)
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+            python3 python-is-python3 openjdk-17-jdk repo ccache
+
+      - name: Init and Sync Repo (Max Retry)
+        run: |
+          mkdir -p ~/fox
+          cd ~/fox
+          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
+          
+          for i in {1..3}; do
+            echo "=== 尝试同步源码 (第 $i 次) ==="
+            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
+            echo "=== 同步失败，等待 10 秒后重试 ==="
+            sleep 10
+          done
+          
+          if [ ! -f "build/envsetup.sh" ]; then
+             repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true
+          fi
+          
+          if [ ! -f "build/envsetup.sh" ]; then
+            echo "源码同步最终失败，请重新运行"
+            exit 1
+          fi
+
+      - name: Clone Device Trees & Patch FoxCLI
+        run: |
+          cd ~/fox
+          mkdir -p device/samsung
+          cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+          
+          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
+          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
+          
+          # 【核心】使用 Python 修复 Android.bp，强行补上依赖
+          echo "=== 正在给 foxcli 补齐 libfox_protocol_types 依赖 ==="
+          python3 -c '
+import os
+bp_file = "external/foxcli/Android.bp"
+if os.path.exists(bp_file):
+    with open(bp_file, "r") as f:
+        content = f.read()
+    if "libfox_protocol_types" not in content:
+        import re
+        # 找到 rustlibs: [ 并插入依赖
+        content = re.sub(r"(rustlibs:\s*\[)", r"\1\n        \"libfox_protocol_types\",", content)
+        with open(bp_file, "w") as f:
+            f.write(content)
+        print("已添加依赖！")
+    else:
+        print("依赖已存在，跳过。")
+else:
+    print("警告: 找不到 Android.bp 文件")
+'
+
+      - name: Force Fix Makefiles
+        run: |
+          cd ~/fox
+          
+          echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
+          echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
+          echo '' >> device/samsung/d1x/AndroidProducts.mk
+          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-bp2a-eng' >> device/samsung/d1x/AndroidProducts.mk
+          
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          
+          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
+          sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
+
+      - name: Build Recovery
+        run: |
+          cd ~/fox
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export FOX_BUILD_DEVICE=d1x
+          
+          source build/envsetup.sh
+          
+          echo "=== 执行 lunch ==="
+          lunch twrp_d1x-bp2a-eng
+          
+          echo "=== 开始编译 Recovery ==="
+          mka recoveryimage -j2
+
+      - name: Package to Odin Tar
+        run: |
+          cd ~/fox/out/target/product/d1x
+          if [ -f recovery.img ]; then
+            echo "编译成功，正在打包 Odin Tar..."
+            tar -cf recovery.tar recovery.img
+            md5sum recovery.tar > recovery.tar.md5
+          else
+            echo "未找到 recovery.img，编译失败。"
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-d1x-Recovery
+          path: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
+          if-no-files-found: error
+
+      - name: Publish Release
+        if: github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OrangeFox-d1x-${{ github.run_id }}
+          tag_name: ${{ github.run_id }}
+          files: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
