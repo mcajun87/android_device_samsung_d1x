@@ -70,7 +70,7 @@ jobs:
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
-      - name: Force Fix Makefiles & Set bp2a
+      - name: Force Fix Makefiles
         run: |
           cd ~/fox
           
@@ -81,7 +81,7 @@ jobs:
           echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
           echo '    twrp_d1x-bp2a-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 生成纯净的 twrp_d1x.mk，并强制指定 TARGET_RELEASE 为 bp2a
+          # 2. 生成纯净的 twrp_d1x.mk，千万不要强塞 TARGET_RELEASE，因为系统规定它是只读的
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
@@ -91,12 +91,8 @@ jobs:
           echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'TARGET_RELEASE := bp2a' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 3. 在 BoardConfig.mk 中也追加设置
-          echo 'TARGET_RELEASE := bp2a' >> device/samsung/d1x/BoardConfig.mk
-          
-          # 4. 清除干扰
+          # 3. 清除干扰
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
           sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
@@ -109,12 +105,12 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           
-          # 官方要求必须 export 设备名
+          # 官方要求的设备导出
           export FOX_BUILD_DEVICE=d1x
           
           source build/envsetup.sh
           
-          echo "=== 执行 lunch ==="
+          echo "=== 执行 lunch (使用官方指定的 bp2a 代号) ==="
           lunch twrp_d1x-bp2a-eng
           
           echo "=== 开始编译 Recovery ==="
