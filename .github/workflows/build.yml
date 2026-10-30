@@ -44,7 +44,6 @@ jobs:
           cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
           
-          # 第一阶段：多线程并行拉取，重试 3 次
           for i in {1..3}; do
             echo "=== 尝试同步源码 (多线程, 第 $i 次) ==="
             repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
@@ -52,13 +51,11 @@ jobs:
             sleep 10
           done
           
-          # 第二阶段：如果多线程死活同步不下来，尝试单线程同步（极慢但最稳，专治网络差）
           if [ ! -f "build/envsetup.sh" ]; then
              echo "=== 多线程失败，切换为单线程龟速同步... ==="
              repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true
           fi
           
-          # 最终检查
           if [ ! -f "build/envsetup.sh" ]; then
             echo "源码同步最终失败，请重新运行工作流"
             exit 1
@@ -78,12 +75,14 @@ jobs:
         run: |
           cd ~/fox
           
+          # 强行注册 lunch 目标，改用底层支持的 trunk
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
           echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
-          echo '    twrp_d1x-trunk_staging-eng' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-trunk-eng' >> device/samsung/d1x/AndroidProducts.mk
           
+          # 强制生成纯净版 twrp_d1x.mk，这次保留对你原版 device.mk 的继承
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
@@ -94,13 +93,12 @@ jobs:
           echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'TARGET_RELEASE := trunk' >> device/samsung/d1x/twrp_d1x.mk
           
-          echo "TARGET_RELEASE := trunk_staging" >> device/samsung/d1x/BoardConfig.mk
+          # 在 BoardConfig.mk 中同步追加，使用 trunk 而不是 trunk_staging
+          echo "TARGET_RELEASE := trunk" >> device/samsung/d1x/BoardConfig.mk
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
-          
-          echo "=== 检查 AndroidProducts.mk ==="
-          cat device/samsung/d1x/AndroidProducts.mk
 
       - name: Build Recovery
         run: |
@@ -113,7 +111,7 @@ jobs:
           source build/envsetup.sh
           
           echo "=== 执行 lunch ==="
-          lunch twrp_d1x-trunk_staging-eng
+          lunch twrp_d1x-trunk-eng
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
