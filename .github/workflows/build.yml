@@ -28,7 +28,7 @@ jobs:
           haskell: true
           large-packages: true
           docker-images: true
-          swap-storage: true # 清理旧 swap
+          swap-storage: true
 
       - name: Setup Swap (防止内存爆满被强杀)
         uses: pierotofy/set-swap-space@master
@@ -104,9 +104,11 @@ jobs:
           cd ~/fox
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
-          export USE_CCACHE=1
-          export CCACHE_EXEC=$(which ccache)
           export FOX_BUILD_DEVICE=d1x
+          
+          # 核心修复：彻底注释掉 ccache，防止只读文件系统报错
+          # export USE_CCACHE=1
+          # export CCACHE_EXEC=$(which ccache)
           
           source build/envsetup.sh
           
@@ -114,7 +116,6 @@ jobs:
           lunch twrp_d1x-bp2a-eng
           
           echo "=== 开始编译 Recovery ==="
-          # 核心修改：限制为 -j2，防止并发过高耗尽内存
           mka recoveryimage -j2
 
       - name: Package to Odin Tar
