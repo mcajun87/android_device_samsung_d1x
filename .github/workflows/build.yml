@@ -1,5 +1,5 @@
-name: Build OrangeFox 16.0 (d1x)
-run-name: Build d1x by ${{ github.actor }}
+name:Build OrangeFox 16.0 (d1x)
+run-name:Build d1x by ${{ github.actor }}
 
 on:
   workflow_dispatch:
