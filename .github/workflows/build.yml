@@ -43,7 +43,7 @@ jobs:
           mkdir -p ~/fox
           cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
+          repo sync -c -j4 --no-clone-bundle --no-tags --force-sync
 
       - name: Clone Device Trees
         run: |
@@ -56,18 +56,18 @@ jobs:
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
-      - name: Force Generate Makefiles
+      - name: Force Fix Makefiles & BoardConfig
         run: |
           cd ~/fox
           
-          # 1. 强制生成绝对无缩进的 AndroidProducts.mk
+          # 1. 强制生成绝对无缩进的 AndroidProducts.mk，修复 lunch 三要素
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
           echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
-          echo '    twrp_d1x-eng' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-trunk_staging-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 强制生成 twrp_d1x.mk 确保文件存在
+          # 2. 强制生成 twrp_d1x.mk 确保继承关系完整
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
@@ -78,6 +78,9 @@ jobs:
           echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          
+          # 3. 核心修复：向 BoardConfig.mk 注入 TARGET_RELEASE
+          echo "TARGET_RELEASE := trunk_staging" >> device/samsung/d1x/BoardConfig.mk
           
           # 删除废弃指令
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
@@ -97,11 +100,8 @@ jobs:
           
           source build/envsetup.sh
           
-          echo "=== 强行指定 TARGET_RELEASE ==="
-          export TARGET_RELEASE=trunk_staging
-          
-          echo "=== 执行 lunch ==="
-          lunch twrp_d1x-eng
+          echo "=== 执行 lunch (使用正确的三段式目标) ==="
+          lunch twrp_d1x-trunk_staging-eng
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
