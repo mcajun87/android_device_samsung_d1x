@@ -1,0 +1,71 @@
+name: Build d1x Recovery
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+          
+      - name: Setup
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl python3 python-is-python3 openjdk-17-jdk repo ccache
+          
+      - name: Sync Source
+        run: |
+          mkdir -p ~/fox && cd ~/fox
+          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
+          repo sync -c -j4 --no-clone-bundle --no-tags --force-sync
+          
+      - name: Add Device Tree
+        run: |
+          cd ~/fox
+          mkdir -p device/samsung
+          cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+          
+      - name: Fix Lunch Target
+        run: |
+          cd ~/fox
+          # 重写 AndroidProducts.mk，注册三段式目标
+          cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
+PRODUCT_MAKEFILES := \
+    $(LOCAL_DIR)/twrp_d1x.mk
+
+COMMON_LUNCH_CHOICES := \
+    twrp_d1x-trunk_staging-eng
+EOF
+          # 将 TARGET_RELEASE 追加到 BoardConfig.mk 中，解决底层 panic
+          echo "TARGET_RELEASE := trunk_staging" >> device/samsung/d1x/BoardConfig.mk
+          # 删除废弃的 add_lunch_combo
+          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          
+      - name: Compile
+        run: |
+          cd ~/fox
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          
+          source build/envsetup.sh
+          echo "=== 执行 lunch ==="
+          lunch twrp_d1x-trunk_staging-eng
+          
+          echo "=== 开始编译 Recovery ==="
+          mka recoveryimage -j$(nproc)
