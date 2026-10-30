@@ -38,12 +38,25 @@ jobs:
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
             python3 python-is-python3 openjdk-17-jdk repo ccache
 
-      - name: Init and Sync Repo
+      - name: Init and Sync Repo (With Retry)
         run: |
           mkdir -p ~/fox
           cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
+          
+          # 核心修复：加入 3 次网络重试机制，并开启 --retry-fetches
+          for i in {1..3}; do
+            echo "=== 尝试同步源码 (第 $i 次) ==="
+            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync --retry-fetches && break
+            echo "=== 同步失败，等待 10 秒后重试 ==="
+            sleep 10
+          done
+          
+          # 检查是否真的同步成功了
+          if [ ! -f "build/envsetup.sh" ]; then
+            echo "源码同步最终失败，请重新运行工作流"
+            exit 1
+          fi
 
       - name: Clone Device Trees
         run: |
@@ -59,7 +72,6 @@ jobs:
         run: |
           cd ~/fox
           
-          # 核心修复 1：必须包含 COMMON_LUNCH_CHOICES
           cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
           PRODUCT_MAKEFILES := \
               $(LOCAL_DIR)/twrp_d1x.mk
@@ -68,7 +80,6 @@ jobs:
               twrp_d1x-eng
           EOF
           
-          # 核心修复 2：在设备 mk 文件里注入 TARGET_RELEASE
           cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
           $(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
           $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
@@ -85,9 +96,6 @@ jobs:
           EOF
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
-          
-          echo "=== 检查 AndroidProducts.mk ==="
-          cat device/samsung/d1x/AndroidProducts.mk
 
       - name: Build Recovery
         run: |
