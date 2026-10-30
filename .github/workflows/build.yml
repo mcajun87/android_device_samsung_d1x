@@ -52,7 +52,6 @@ jobs:
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
-          # 清理其他设备树，防止干扰
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
@@ -60,13 +59,16 @@ jobs:
         run: |
           cd ~/fox
           
-          # 确保 AndroidProducts.mk 存在
+          # 核心修复 1：必须包含 COMMON_LUNCH_CHOICES
           cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
           PRODUCT_MAKEFILES := \
               $(LOCAL_DIR)/twrp_d1x.mk
+
+          COMMON_LUNCH_CHOICES := \
+              twrp_d1x-eng
           EOF
           
-          # 确保 twrp_d1x.mk 存在且内容绝对正确
+          # 核心修复 2：在设备 mk 文件里注入 TARGET_RELEASE
           cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
           $(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
           $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
@@ -78,10 +80,14 @@ jobs:
           PRODUCT_BRAND := samsung
           PRODUCT_MODEL := SM-N971N
           PRODUCT_MANUFACTURER := samsung
+
+          TARGET_RELEASE := trunk_staging
           EOF
           
-          # 删掉 vendorsetup.sh 里的干扰项
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          
+          echo "=== 检查 AndroidProducts.mk ==="
+          cat device/samsung/d1x/AndroidProducts.mk
 
       - name: Build Recovery
         run: |
@@ -91,16 +97,12 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           
-          # 加载基础环境（这样才有 mka 命令）
           source build/envsetup.sh
           
-          # 强行注入所有构建变量，彻底绕过 lunch 检查
-          export TARGET_PRODUCT=twrp_d1x
-          export TARGET_DEVICE=d1x
-          export TARGET_BUILD_VARIANT=eng
-          export TARGET_BOARD_PLATFORM=universal9825
+          echo "=== 执行 lunch ==="
+          lunch twrp_d1x-eng
           
-          echo "=== 强行开始编译 Recovery ==="
+          echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar
