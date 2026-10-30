@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - With FoxCLI
+name: Build OrangeFox 16.0 (d1x)
 run-name: Build d1x (With FoxCLI) by ${{ github.actor }}
 
 on:
