@@ -1,0 +1,83 @@
+name: Build Recovery
+run-name: Build Recovery by mcajun87
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+            python3 python-is-python3 openjdk-17-jdk repo ccache
+
+      - name: Init and Sync Repo
+        run: |
+          mkdir -p ~/fox && cd ~/fox
+          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
+          for i in {1..3}; do
+            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
+            sleep 10
+          done
+
+      - name: Clone Device Trees
+        run: |
+          cd ~/fox
+          mkdir -p device/samsung
+          cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
+          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
+
+      - name: Force Generate Makefiles
+        run: |
+          cd ~/fox
+          cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
+PRODUCT_MAKEFILES := \
+    $(LOCAL_DIR)/twrp_d1x.mk
+
+COMMON_LUNCH_CHOICES := \
+    twrp_d1x-trunk_staging-eng
+EOF
+          cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
+$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
+$(call inherit-product, vendor/twrp/config/common.mk)
+$(call inherit-product, device/samsung/d1x/device.mk)
+
+PRODUCT_DEVICE := d1x
+PRODUCT_NAME := twrp_d1x
+PRODUCT_BRAND := samsung
+PRODUCT_MODEL := SM-N971N
+PRODUCT_MANUFACTURER := samsung
+
+TARGET_RELEASE := trunk_staging
+EOF
+          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+
+      - name: Build Recovery
+        run: |
+          cd ~/fox
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          source build/envsetup.sh
+          lunch twrp_d1x-trunk_staging-eng
+          mka recoveryimage -j$(nproc)
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Recovery-Image
+          path: ~/fox/out/target/product/d1x/recovery.img
