@@ -71,29 +71,35 @@ jobs:
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
-      - name: Force Fix Makefiles & Hack Soong
+      - name: Force Generate Clean Makefiles
         run: |
           cd ~/fox
           
-          # 1. 严格注册 lunch 目标，使用标准的 trunk_staging
+          # 1. 纯净版 AndroidProducts.mk（只保留 PRODUCT_MAKEFILES，绝不写 COMMON_LUNCH_CHOICES）
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
-          echo '' >> device/samsung/d1x/AndroidProducts.mk
-          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
-          echo '    twrp_d1x-trunk_staging-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 在 BoardConfig.mk 中同步追加
-          echo "TARGET_RELEASE := trunk_staging" >> device/samsung/d1x/BoardConfig.mk
+          # 2. 纯净版 vendorsetup.sh（直接清空，绝对不留 add_lunch_combo）
+          echo "" > device/samsung/d1x/vendorsetup.sh
           
-          # 3. 删除废弃的 add_lunch_combo（必须删掉，不然会误导系统）
-          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          # 3. 纯净版 twrp_d1x.mk（切断所有可能出错的继承）
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 4. 终极救场：修改底层 build/soong 的代码，把引发崩溃的 panic 替换成打印警告！
-          # 这样系统就不会因为找不到 config 而猝死，而是继续往后编译
-          sed -i 's/panic(/fmt.Printf("WARNING: Bypassing panic!\\n"); \/\/ /g' build/soong/cmd/release_config/main.go || true
+          # 4. 剥离 BoardConfig.mk 里的 TARGET_RELEASE（防止底层强制去查配置导致崩溃）
+          sed -i '/TARGET_RELEASE/d' device/samsung/d1x/BoardConfig.mk
           
-          echo "=== 检查 Soong 是否修改成功 ==="
-          grep "Bypassing panic" build/soong/cmd/release_config/main.go || true
+          # 5. 清洗换行符
+          sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
+          sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
 
       - name: Build Recovery
         run: |
@@ -106,10 +112,10 @@ jobs:
           source build/envsetup.sh
           
           echo "=== 执行 lunch ==="
-          lunch twrp_d1x-trunk_staging-eng
+          lunch twrp_d1x-eng
           
           echo "=== 开始编译 Recovery ==="
-          mka recoverydir -j$(nproc) || mka recoveryimage -j$(nproc)
+          mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar
         run: |
