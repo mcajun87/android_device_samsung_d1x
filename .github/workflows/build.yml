@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Final
+name: Build OrangeFox 16.0 (d1x) - Final Compression
 run-name: Build d1x Final by ${{ github.actor }}
 
 on:
@@ -41,7 +41,7 @@ jobs:
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-17-jdk repo ccache
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma
 
       - name: Init and Sync Repo (Max Retry)
         run: |
@@ -79,7 +79,7 @@ jobs:
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
           sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
 
-      - name: Force Fix Makefiles & Apply Slimming
+      - name: Force Fix Makefiles & Apply Extreme Compression
         run: |
           cd ~/fox
           
@@ -102,7 +102,7 @@ jobs:
           echo 'PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false' >> device/samsung/d1x/twrp_d1x.mk
           echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 为了防止你的仓库里已经写了冲突配置，先清理掉旧的
+          # 清理可能冲突的旧配置
           sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
@@ -110,20 +110,33 @@ jobs:
           sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
           
           # ==========================================
-          # 🚀 核心配置：中英繁支持 + 极致瘦身防超限
+          # 🚀 终极压缩与语言精确控制
           # ==========================================
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          
+          # 尝试强制指定只编译这三门语言（防止带进其他用不上的小语种）
+          echo 'TW_LANGUAGES := en_US zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
+          
+          # 开启极致的 LZMA 压缩
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
-          echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_RAMDISK_USE_LZMA := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_RAMDISK_COMPRESSION_METHOD := lzma' >> device/samsung/d1x/BoardConfig.mk
           
-          # 强力瘦身（移除AromaFM、AAPT等无用组件），保留语言支持
+          # 极限排除无用的附加功能
+          echo 'TW_EXCLUDE_SUPERSU := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_BASH := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_PYTHON := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'OF_DISABLE_MIUI_SPECIFIC_FEATURES := 1' >> device/samsung/d1x/BoardConfig.mk
+          
+          # 强力瘦身变量
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_DELETE_AROMAFM=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_REMOVE_AAPT=1' >> device/samsung/d1x/vendorsetup.sh
-          echo 'export FOX_USE_BASH_SHELL=0' >> device/samsung/d1x/vendorsetup.sh
-          echo 'export FOX_USE_NANO_EDITOR=0' >> device/samsung/d1x/vendorsetup.sh
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           
@@ -149,7 +162,7 @@ jobs:
           echo "=== 执行 lunch ==="
           lunch twrp_d1x-bp2a-eng
           
-          echo "=== 开始编译 Recovery (已开启中英繁支持+极限瘦身) ==="
+          echo "=== 开始编译 Recovery (已开启极限 LZMA 压缩) ==="
           mka recoveryimage -j2
 
       - name: Package to Odin Tar
