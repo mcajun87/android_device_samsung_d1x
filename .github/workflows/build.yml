@@ -71,34 +71,23 @@ jobs:
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
-      - name: Force Fix Makefiles & BoardConfig
+      - name: Fix Lunch Target (Traditional Way)
         run: |
           cd ~/fox
           
-          # 强行注册 lunch 目标，改用底层支持的 trunk
+          # 恢复传统的注册方式，绕过 AOSP 16 复杂的判定
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
-          echo '' >> device/samsung/d1x/AndroidProducts.mk
-          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
-          echo '    twrp_d1x-trunk-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 强制生成纯净版 twrp_d1x.mk，这次保留对你原版 device.mk 的继承
-          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
-          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
-          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
-          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
-          echo '' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
-          echo 'TARGET_RELEASE := trunk' >> device/samsung/d1x/twrp_d1x.mk
+          # 向你原版的 vendorsetup.sh 末尾追加 add_lunch_combo
+          echo 'add_lunch_combo twrp_d1x-eng' >> device/samsung/d1x/vendorsetup.sh
           
-          # 在 BoardConfig.mk 中同步追加，使用 trunk 而不是 trunk_staging
-          echo "TARGET_RELEASE := trunk" >> device/samsung/d1x/BoardConfig.mk
+          # 强制清除可能存在的 CRLF 换行符，防止解析崩溃
+          sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
+          sed -i 's/\r$//' device/samsung/d1x/vendorsetup.sh
           
-          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          echo "=== 打印 vendorsetup.sh ==="
+          cat device/samsung/d1x/vendorsetup.sh
 
       - name: Build Recovery
         run: |
@@ -111,7 +100,7 @@ jobs:
           source build/envsetup.sh
           
           echo "=== 执行 lunch ==="
-          lunch twrp_d1x-trunk-eng
+          lunch twrp_d1x-eng
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
