@@ -28,7 +28,12 @@ jobs:
           haskell: true
           large-packages: true
           docker-images: true
-          swap-storage: true
+          swap-storage: true # 清理旧 swap
+
+      - name: Setup Swap (防止内存爆满被强杀)
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
 
       - name: Install Dependencies
         run: |
@@ -74,14 +79,12 @@ jobs:
         run: |
           cd ~/fox
           
-          # 1. 强制注册正确的 bp2a lunch 目标
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
           echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
           echo '    twrp_d1x-bp2a-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 生成纯净的 twrp_d1x.mk，千万不要强塞 TARGET_RELEASE，因为系统规定它是只读的
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
@@ -92,7 +95,6 @@ jobs:
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 3. 清除干扰
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
           sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
@@ -104,17 +106,16 @@ jobs:
           export LC_ALL=C
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
-          
-          # 官方要求的设备导出
           export FOX_BUILD_DEVICE=d1x
           
           source build/envsetup.sh
           
-          echo "=== 执行 lunch (使用官方指定的 bp2a 代号) ==="
+          echo "=== 执行 lunch ==="
           lunch twrp_d1x-bp2a-eng
           
           echo "=== 开始编译 Recovery ==="
-          mka recoveryimage -j$(nproc)
+          # 核心修改：限制为 -j2，防止并发过高耗尽内存
+          mka recoveryimage -j2
 
       - name: Package to Odin Tar
         run: |
