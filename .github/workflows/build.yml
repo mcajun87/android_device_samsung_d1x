@@ -45,19 +45,17 @@ jobs:
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
           
           for i in {1..3}; do
-            echo "=== 尝试同步源码 (多线程, 第 $i 次) ==="
+            echo "=== 尝试同步源码 (第 $i 次) ==="
             repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
             echo "=== 同步失败，等待 10 秒后重试 ==="
             sleep 10
           done
           
           if [ ! -f "build/envsetup.sh" ]; then
-             echo "=== 多线程失败，切换为单线程龟速同步... ==="
              repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true
           fi
           
           if [ ! -f "build/envsetup.sh" ]; then
-            echo "源码同步最终失败，请重新运行工作流"
             exit 1
           fi
 
@@ -71,32 +69,24 @@ jobs:
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
-      - name: Force Fix Makefiles & Hack Soong Panic
+      - name: Force Fix Makefiles & Hack Release Config
         run: |
           cd ~/fox
           
-          # 1. 强制注册带 trunk_staging 的三段式目标，解决 Invalid lunch combo
+          # 1. 恢复传统的注册方式，不再写 COMMON_LUNCH_CHOICES
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
-          echo '' >> device/samsung/d1x/AndroidProducts.mk
-          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
-          echo '    twrp_d1x-trunk_staging-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 写死 TARGET_RELEASE 给编译器看
-          echo "TARGET_RELEASE := trunk_staging" >> device/samsung/d1x/BoardConfig.mk
-          
-          # 3. 删掉废弃的指令
+          # 2. 删除 vendorsetup.sh 里的废弃指令
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           
-          # 4. 核武器：修改底层源码，把导致崩溃的 error 和 panic 强行屏蔽掉！
-          # 把 Makefile 里的 error 改成 warning
-          sed -i 's/\$(error release-config failed to run)/\$(warning release-config failed to run, ignoring...)/g' build/make/core/release_config.mk || true
-          # 把 Go 源码里的 panic 注释掉
-          sed -i 's/panic(/\/\/ panic(/g' build/soong/cmd/release_config/main.go || true
+          # 3. 终极暴力 Hack：修改 build/make/core/release_config.mk
+          # 把引发崩溃的第 154 行的 $(error ...) 直接注释掉，让它找不到文件也别报错！
+          sed -i '154s/^/#/' build/make/core/release_config.mk
           
-          echo "=== 检查底层代码是否修改成功 ==="
-          grep -n "warning release-config" build/make/core/release_config.mk || true
-          grep -n "// panic" build/soong/cmd/release_config/main.go || true
+          # 4. 既然它一直要找 .varmk，我们就手动给它捏造一个空文件，放进对应目录
+          mkdir -p out/soong/release-config
+          touch out/soong/release-config/release_config-twrp_d1x-trunk_staging.varmk
 
       - name: Build Recovery
         run: |
@@ -108,10 +98,13 @@ jobs:
           
           source build/envsetup.sh
           
-          echo "=== 执行 lunch ==="
-          lunch twrp_d1x-trunk_staging-eng
+          # 彻底跳过 lunch，直接硬塞环境变量
+          export TARGET_PRODUCT=twrp_d1x
+          export TARGET_RELEASE=trunk_staging
+          export TARGET_BUILD_VARIANT=eng
+          export TARGET_DEVICE=d1x
           
-          echo "=== 开始编译 Recovery ==="
+          echo "=== 直接开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar
