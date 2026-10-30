@@ -70,18 +70,18 @@ jobs:
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
-      - name: Force Fix Makefiles and Hack Soong Panic
+      - name: Force Fix Makefiles & Set bp2a
         run: |
           cd ~/fox
           
-          # 1. 填充生成设备树的三段式 lunch 目标
+          # 1. 强制注册正确的 bp2a lunch 目标
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
           echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
-          echo '    twrp_d1x-trunk_staging-eng' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-bp2a-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 生成纯净的 twrp_d1x.mk
+          # 2. 生成纯净的 twrp_d1x.mk，并强制指定 TARGET_RELEASE 为 bp2a
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
@@ -91,26 +91,15 @@ jobs:
           echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'TARGET_RELEASE := bp2a' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 清除干扰
+          # 3. 在 BoardConfig.mk 中也追加设置
+          echo 'TARGET_RELEASE := bp2a' >> device/samsung/d1x/BoardConfig.mk
+          
+          # 4. 清除干扰
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
           sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
-          
-          # 3. 外科手术：修改源码，强行屏蔽所有的报错和崩溃！
-          # 将 build/make/core/release_config.mk 里所有的 error 降级为 warning
-          sed -i 's/\$(error/\$(warning/g' build/make/core/release_config.mk || true
-          
-          # 将 build/soong 里的 panic 全部替换掉
-          sed -i 's/panic(/_ = /g' build/soong/cmd/release_config/release_config/main.go || true
-          sed -i 's/panic(/_ = /g' build/soong/cmd/release_config/main.go || true
-          
-          # 强行捏造一个缺失的配置文件
-          mkdir -p build/release/release_config/trunk_staging
-          echo "PRODUCT_SHIPPING_API_LEVEL := 34" > build/release/release_config/trunk_staging/trunk_staging.mk || true
-          
-          # 清理编译缓存，强制源码重新编译生效
-          rm -rf out/soong
 
       - name: Build Recovery
         run: |
@@ -120,10 +109,13 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           
+          # 官方要求必须 export 设备名
+          export FOX_BUILD_DEVICE=d1x
+          
           source build/envsetup.sh
           
           echo "=== 执行 lunch ==="
-          lunch twrp_d1x-trunk_staging-eng
+          lunch twrp_d1x-bp2a-eng
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
