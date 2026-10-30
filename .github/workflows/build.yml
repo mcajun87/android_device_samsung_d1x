@@ -1,5 +1,5 @@
-name: Build OrangeFox 16.0 (d1x) 
-run-name: Build d1x  by ${{ github.actor }}
+name: Build OrangeFox 16.0 (d1x) - Final
+run-name: Build d1x Final by ${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -61,7 +61,6 @@ jobs:
           fi
           
           if [ ! -f "build/envsetup.sh" ]; then
-            echo "源码同步最终失败，请重新运行"
             exit 1
           fi
 
@@ -75,12 +74,12 @@ jobs:
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
           
-          # 移除报错的 foxcli
+          # 移除引发编译中断的 foxcli
           rm -rf external/foxcli
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
           sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
 
-      - name: Force Fix Makefiles
+      - name: Force Fix Makefiles & Apply Slimming
         run: |
           cd ~/fox
           
@@ -100,16 +99,39 @@ jobs:
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 强制关闭 16K page size 检查和 ELF 检查
           echo 'PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false' >> device/samsung/d1x/twrp_d1x.mk
           echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 在 BoardConfig 也加上
+          # 为了防止你的仓库里已经写了冲突配置，先清理掉旧的
+          sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
+          
+          # ==========================================
+          # 🚀 核心配置：中英繁支持 + 极致瘦身防超限
+          # ==========================================
+          echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
+          echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
           echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/BoardConfig.mk
           
+          # 强力瘦身（移除AromaFM、AAPT等无用组件），保留语言支持
+          echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
+          echo 'export FOX_DELETE_AROMAFM=1' >> device/samsung/d1x/vendorsetup.sh
+          echo 'export FOX_REMOVE_AAPT=1' >> device/samsung/d1x/vendorsetup.sh
+          echo 'export FOX_USE_BASH_SHELL=0' >> device/samsung/d1x/vendorsetup.sh
+          echo 'export FOX_USE_NANO_EDITOR=0' >> device/samsung/d1x/vendorsetup.sh
+          
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+          
+          # 清理 CRLF
           sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
           sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
+          sed -i 's/\r$//' device/samsung/d1x/vendorsetup.sh
+          sed -i 's/\r$//' device/samsung/d1x/BoardConfig.mk
 
       - name: Build Recovery
         run: |
@@ -118,7 +140,6 @@ jobs:
           export LC_ALL=C
           export FOX_BUILD_DEVICE=d1x
           
-          # 核心修复：在环境变量中彻底干掉所有预编译文件的死板检查！
           export BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY=true
           export BUILD_BROKEN_DISABLE_16K_CHECK=true
           export DISABLE_16K_CHECK=true
@@ -128,7 +149,7 @@ jobs:
           echo "=== 执行 lunch ==="
           lunch twrp_d1x-bp2a-eng
           
-          echo "=== 开始编译 Recovery ==="
+          echo "=== 开始编译 Recovery (已开启中英繁支持+极限瘦身) ==="
           mka recoveryimage -j2
 
       - name: Package to Odin Tar
