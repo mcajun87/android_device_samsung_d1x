@@ -1,5 +1,5 @@
-name: Build OrangeFox 16.0 (d1x) - No FoxCLI
-run-name: Build d1x (No FoxCLI) by ${{ github.actor }}
+name: Build OrangeFox 16.0 (d1x) - No Fox
+run-name: Build d1x (No Fox) by ${{ github.actor }}
 
 on:
   workflow_dispatch:
