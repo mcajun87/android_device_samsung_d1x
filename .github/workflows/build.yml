@@ -56,6 +56,7 @@ jobs:
           fi
           
           if [ ! -f "build/envsetup.sh" ]; then
+            echo "源码同步最终失败，请重新运行"
             exit 1
           fi
 
@@ -73,20 +74,36 @@ jobs:
         run: |
           cd ~/fox
           
-          # 1. 恢复传统的注册方式，不再写 COMMON_LUNCH_CHOICES
+          # 1. 终极 Hack：在源码树里伪造缺失的 trunk_staging 配置文件！
+          # 这样底层的 Go 程序就不会因为找不到文件而 panic 崩溃了
+          mkdir -p build/make/target/product/release_config/trunk_staging
+          echo "PRODUCT_SHIPPING_API_LEVEL := 34" > build/make/target/product/release_config/trunk_staging/trunk_staging.mk
+          
+          # 2. 规范生成设备树的三段式 lunch 目标
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
+          echo '' >> device/samsung/d1x/AndroidProducts.mk
+          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-trunk_staging-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 删除 vendorsetup.sh 里的废弃指令
+          # 3. 保证 twrp_d1x.mk 纯净且继承正确
+          cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
+$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
+$(call inherit-product, vendor/twrp/config/common.mk)
+$(call inherit-product, device/samsung/d1x/device.mk)
+
+PRODUCT_DEVICE := d1x
+PRODUCT_NAME := twrp_d1x
+PRODUCT_BRAND := samsung
+PRODUCT_MODEL := SM-N971N
+PRODUCT_MANUFACTURER := samsung
+EOF
+          
+          # 清除干扰
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
-          
-          # 3. 终极暴力 Hack：修改 build/make/core/release_config.mk
-          # 把引发崩溃的第 154 行的 $(error ...) 直接注释掉，让它找不到文件也别报错！
-          sed -i '154s/^/#/' build/make/core/release_config.mk
-          
-          # 4. 既然它一直要找 .varmk，我们就手动给它捏造一个空文件，放进对应目录
-          mkdir -p out/soong/release-config
-          touch out/soong/release-config/release_config-twrp_d1x-trunk_staging.varmk
+          sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
+          sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
 
       - name: Build Recovery
         run: |
@@ -98,13 +115,10 @@ jobs:
           
           source build/envsetup.sh
           
-          # 彻底跳过 lunch，直接硬塞环境变量
-          export TARGET_PRODUCT=twrp_d1x
-          export TARGET_RELEASE=trunk_staging
-          export TARGET_BUILD_VARIANT=eng
-          export TARGET_DEVICE=d1x
+          echo "=== 执行 lunch ==="
+          lunch twrp_d1x-trunk_staging-eng
           
-          echo "=== 直接开始编译 Recovery ==="
+          echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar
