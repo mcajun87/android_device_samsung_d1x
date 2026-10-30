@@ -38,12 +38,31 @@ jobs:
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
             python3 python-is-python3 openjdk-17-jdk repo ccache
 
-      - name: Init and Sync Repo
+      - name: Init and Sync Repo (Max Retry)
         run: |
           mkdir -p ~/fox
           cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          repo sync -c -j4 --no-clone-bundle --no-tags --force-sync
+          
+          # 第一阶段：多线程并行拉取，重试 3 次
+          for i in {1..3}; do
+            echo "=== 尝试同步源码 (多线程, 第 $i 次) ==="
+            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
+            echo "=== 同步失败，等待 10 秒后重试 ==="
+            sleep 10
+          done
+          
+          # 第二阶段：如果多线程死活同步不下来，尝试单线程同步（极慢但最稳，专治网络差）
+          if [ ! -f "build/envsetup.sh" ]; then
+             echo "=== 多线程失败，切换为单线程龟速同步... ==="
+             repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true
+          fi
+          
+          # 最终检查
+          if [ ! -f "build/envsetup.sh" ]; then
+            echo "源码同步最终失败，请重新运行工作流"
+            exit 1
+          fi
 
       - name: Clone Device Trees
         run: |
@@ -52,7 +71,6 @@ jobs:
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
-          # 暴力清理干扰
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
@@ -60,14 +78,12 @@ jobs:
         run: |
           cd ~/fox
           
-          # 1. 强制生成绝对无缩进的 AndroidProducts.mk，修复 lunch 三要素
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
           echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
           echo '    twrp_d1x-trunk_staging-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 2. 强制生成 twrp_d1x.mk 确保继承关系完整
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
           echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
@@ -79,16 +95,12 @@ jobs:
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 3. 核心修复：向 BoardConfig.mk 注入 TARGET_RELEASE
           echo "TARGET_RELEASE := trunk_staging" >> device/samsung/d1x/BoardConfig.mk
           
-          # 删除废弃指令
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           
-          echo "=== 检查生成的 AndroidProducts.mk ==="
+          echo "=== 检查 AndroidProducts.mk ==="
           cat device/samsung/d1x/AndroidProducts.mk
-          echo "=== 检查生成的 twrp_d1x.mk ==="
-          cat device/samsung/d1x/twrp_d1x.mk
 
       - name: Build Recovery
         run: |
@@ -100,7 +112,7 @@ jobs:
           
           source build/envsetup.sh
           
-          echo "=== 执行 lunch (使用正确的三段式目标) ==="
+          echo "=== 执行 lunch ==="
           lunch twrp_d1x-trunk_staging-eng
           
           echo "=== 开始编译 Recovery ==="
