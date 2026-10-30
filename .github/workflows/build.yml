@@ -70,7 +70,7 @@ jobs:
         run: |
           cd ~/fox
           
-          # 核心修复：注册带 release 版本的完整 lunch 目标
+          # 强行注册正确的 Lunch 目标
           cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
 PRODUCT_MAKEFILES := \
     $(LOCAL_DIR)/twrp_d1x.mk
@@ -79,7 +79,7 @@ COMMON_LUNCH_CHOICES := \
     twrp_d1x-trunk_staging-eng
 EOF
           
-          # 核心修复：在产品定义里强制写死 TARGET_RELEASE
+          # 强制在产品文件里锁死 TARGET_RELEASE
           cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
 $(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
 $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
@@ -97,7 +97,7 @@ EOF
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           
-          echo "=== 检查 AndroidProducts.mk ==="
+          echo "=== 检查生成的 AndroidProducts.mk ==="
           cat device/samsung/d1x/AndroidProducts.mk
 
       - name: Build Recovery
@@ -110,8 +110,14 @@ EOF
           
           source build/envsetup.sh
           
-          echo "=== 执行 lunch (三要素格式) ==="
-          lunch twrp_d1x-trunk_staging-eng
+          # 强行注入底层需要的一切环境变量
+          export TARGET_PRODUCT=twrp_d1x
+          export TARGET_RELEASE=trunk_staging
+          export TARGET_DEVICE=d1x
+          export TARGET_BUILD_VARIANT=eng
+          
+          echo "=== 执行 lunch ==="
+          lunch twrp_d1x-trunk_staging-eng || true
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
