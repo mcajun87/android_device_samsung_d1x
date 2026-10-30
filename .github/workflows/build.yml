@@ -38,23 +38,12 @@ jobs:
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
             python3 python-is-python3 openjdk-17-jdk repo ccache
 
-      - name: Init and Sync Repo (With Retry)
+      - name: Init and Sync Repo
         run: |
           mkdir -p ~/fox
           cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          
-          for i in {1..3}; do
-            echo "=== 尝试同步源码 (第 $i 次) ==="
-            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
-            echo "=== 同步失败，等待 10 秒后重试 ==="
-            sleep 10
-          done
-          
-          if [ ! -f "build/envsetup.sh" ]; then
-            echo "源码同步最终失败"
-            exit 1
-          fi
+          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
       - name: Clone Device Trees
         run: |
@@ -63,6 +52,7 @@ jobs:
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
+          # 暴力清理干扰
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
 
@@ -70,35 +60,32 @@ jobs:
         run: |
           cd ~/fox
           
-          # 核心修复：注册带 release 版本的完整 lunch 目标
-          cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
-PRODUCT_MAKEFILES := \
-    $(LOCAL_DIR)/twrp_d1x.mk
-
-COMMON_LUNCH_CHOICES := \
-    twrp_d1x-trunk_staging-eng
-EOF
+          # 1. 强制生成绝对无缩进的 AndroidProducts.mk
+          echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
+          echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
+          echo '' >> device/samsung/d1x/AndroidProducts.mk
+          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-eng' >> device/samsung/d1x/AndroidProducts.mk
           
-          # 核心修复：在产品定义里强制写死 TARGET_RELEASE
-          cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
-$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
-$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
-$(call inherit-product, vendor/twrp/config/common.mk)
-$(call inherit-product, device/samsung/d1x/device.mk)
-
-PRODUCT_DEVICE := d1x
-PRODUCT_NAME := twrp_d1x
-PRODUCT_BRAND := samsung
-PRODUCT_MODEL := SM-N971N
-PRODUCT_MANUFACTURER := samsung
-
-TARGET_RELEASE := trunk_staging
-EOF
+          # 2. 强制生成 twrp_d1x.mk 确保文件存在
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
           
+          # 删除废弃指令
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
           
-          echo "=== 检查 AndroidProducts.mk ==="
+          echo "=== 检查生成的 AndroidProducts.mk ==="
           cat device/samsung/d1x/AndroidProducts.mk
+          echo "=== 检查生成的 twrp_d1x.mk ==="
+          cat device/samsung/d1x/twrp_d1x.mk
 
       - name: Build Recovery
         run: |
@@ -110,8 +97,11 @@ EOF
           
           source build/envsetup.sh
           
-          echo "=== 执行 lunch (三要素格式) ==="
-          lunch twrp_d1x-trunk_staging-eng
+          echo "=== 强行指定 TARGET_RELEASE ==="
+          export TARGET_RELEASE=trunk_staging
+          
+          echo "=== 执行 lunch ==="
+          lunch twrp_d1x-eng
           
           echo "=== 开始编译 Recovery ==="
           mka recoveryimage -j$(nproc)
