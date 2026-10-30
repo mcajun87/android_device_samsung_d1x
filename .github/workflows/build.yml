@@ -1,6 +1,4 @@
-name: Build Recovery
-run-name: Build Recovery by mcajun87
-
+name: BuildRecoveryTest
 on:
   workflow_dispatch:
 
@@ -8,42 +6,43 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
-
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
-
-      - name: Install Dependencies
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+          
+      - name: Setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
-            zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-17-jdk repo ccache
-
-      - name: Init and Sync Repo
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl python3 python-is-python3 openjdk-17-jdk repo ccache
+          
+      - name: Sync Source
         run: |
           mkdir -p ~/fox && cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          for i in {1..3}; do
-            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
-            sleep 10
-          done
-
-      - name: Clone Device Trees
+          repo sync -c -j4 --no-clone-bundle --no-tags
+          
+      - name: Add Device Tree
         run: |
           cd ~/fox
           mkdir -p device/samsung
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
-          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
-          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
-
-      - name: Force Generate Makefiles
+          
+      - name: Fix Lunch Target
         run: |
           cd ~/fox
+          
+          # 1. 强制重写 AndroidProducts.mk，注册正确的三段式目标
           cat << 'EOF' > device/samsung/d1x/AndroidProducts.mk
 PRODUCT_MAKEFILES := \
     $(LOCAL_DIR)/twrp_d1x.mk
@@ -51,33 +50,28 @@ PRODUCT_MAKEFILES := \
 COMMON_LUNCH_CHOICES := \
     twrp_d1x-trunk_staging-eng
 EOF
-          cat << 'EOF' > device/samsung/d1x/twrp_d1x.mk
-$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
-$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
-$(call inherit-product, vendor/twrp/config/common.mk)
-$(call inherit-product, device/samsung/d1x/device.mk)
-
-PRODUCT_DEVICE := d1x
-PRODUCT_NAME := twrp_d1x
-PRODUCT_BRAND := samsung
-PRODUCT_MODEL := SM-N971N
-PRODUCT_MANUFACTURER := samsung
-
-TARGET_RELEASE := trunk_staging
-EOF
+          
+          # 2. 核心修复：把 TARGET_RELEASE 直接写进 BoardConfig.mk，告诉底层编译器用这个配置
+          echo "TARGET_RELEASE := trunk_staging" >> device/samsung/d1x/BoardConfig.mk
+          
+          # 删除报错的废弃指令
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
-
-      - name: Build Recovery
+          
+          echo "=== 检查 AndroidProducts.mk ==="
+          cat device/samsung/d1x/AndroidProducts.mk
+          
+      - name: Compile
         run: |
           cd ~/fox
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          
           source build/envsetup.sh
+          
+          echo "=== 执行 lunch ==="
           lunch twrp_d1x-trunk_staging-eng
+          
+          echo "=== 开始编译 ==="
           mka recoveryimage -j$(nproc)
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Recovery-Image
-          path: ~/fox/out/target/product/d1x/recovery.img
