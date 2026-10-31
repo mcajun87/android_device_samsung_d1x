@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Absolute Pack
+name: Build OrangeFox 16.0 (d1x) - Final Hack
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -96,7 +96,8 @@ jobs:
           
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := en_US zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
+          # 去掉繁体中文，进一步省空间
+          echo 'TW_LANGUAGES := en_US zh_CN' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'TW_EXCLUDE_SUPERSU := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
@@ -121,9 +122,8 @@ jobs:
           
           mka recoveryimage -j2 || true
 
-      - name: Repack Recovery Image with GZIP Ramdisk
+      - name: Deep Clean Ramdisk and Repack
         run: |
-          # 定义所有的绝对路径，绝对不迷路
           export HOME_DIR=$HOME
           MKBootImg=$HOME_DIR/fox/out/host/linux-x86/bin/mkbootimg
           AVBTOOL=$HOME_DIR/fox/out/host/linux-x86/bin/avbtool
@@ -134,9 +134,35 @@ jobs:
           cd $OUT_DIR
           
           if [ -f "ramdisk-recovery.img" ]; then
-             echo "=== 开始强行 GZIP 压缩 Ramdisk ==="
-             cp ramdisk-recovery.img ramdisk-recovery.img.orig
-             gzip -9 -c ramdisk-recovery.img.orig > ramdisk-recovery.img.gz
+             echo "=== 解压 Ramdisk，深入物理清理大文件 ==="
+             mkdir -p rd_tmp && cd rd_tmp
+             
+             # 自动判断压缩格式并解压
+             if gzip -t ../ramdisk-recovery.img 2>/dev/null; then
+                 gzip -dc ../ramdisk-recovery.img | cpio -idm
+             elif lz4 -t ../ramdisk-recovery.img 2>/dev/null; then
+                 lz4 -dc ../ramdisk-recovery.img | cpio -idm
+             else
+                 cpio -idm < ../ramdisk-recovery.img
+             fi
+             
+             echo "=== 删除多余的图片分辨率与语言包 ==="
+             # 删掉横屏、低分辨率、超高分辨率的图片，只保留 xxhdpi（主要分辨率）
+             rm -rf twres/images/land || true
+             rm -rf twres/images/mdpi || true
+             rm -rf twres/images/hdpi || true
+             rm -rf twres/images/xhdpi || true
+             rm -rf twres/images/xxxhdpi || true
+             
+             # 删掉多语言包（只保留中文简体）
+             rm -rf twres/languages/zh_TW* || true
+             
+             # 删掉巨大的无用二进制
+             rm -rf bin/python3 bin/bash bin/nano || true
+             
+             echo "=== 重新压缩 Ramdisk ==="
+             find . | cpio -o -H newc | gzip -9 > ../ramdisk-recovery.img.gz
+             cd $OUT_DIR
              
              echo "=== 手动使用 mkbootimg 重新打包 ==="
              $MKBootImg \
