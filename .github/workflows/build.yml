@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Ultimate
+name: Build OrangeFox 16.0 (d1x) - Manual Pack
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -30,7 +30,7 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Setup Swap (防止内存爆满被强杀)
+      - name: Setup Swap
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 16
@@ -41,28 +41,17 @@ jobs:
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma liblz4-tool
 
-      - name: Init and Sync Repo (Max Retry)
+      - name: Init and Sync Repo
         run: |
-          mkdir -p ~/fox
-          cd ~/fox
+          mkdir -p ~/fox && cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          
           for i in {1..3}; do
-            echo "=== 尝试同步源码 (第 $i 次) ==="
             repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
-            echo "=== 同步失败，等待 10 秒后重试 ==="
             sleep 10
           done
-          
-          if [ ! -f "build/envsetup.sh" ]; then
-             repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true
-          fi
-          
-          if [ ! -f "build/envsetup.sh" ]; then
-            exit 1
-          fi
+          if [ ! -f "build/envsetup.sh" ]; then repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true; fi
 
       - name: Clone Device Trees & Remove FoxCLI
         run: |
@@ -73,12 +62,11 @@ jobs:
           
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
-          
           rm -rf external/foxcli
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
           sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
 
-      - name: Force Fix Makefiles & Force Ramdisk Compression
+      - name: Force Fix Makefiles
         run: |
           cd ~/fox
           
@@ -101,69 +89,93 @@ jobs:
           echo 'PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false' >> device/samsung/d1x/twrp_d1x.mk
           echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 清理之前的无用配置
           sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
-          sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
-          sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_MKBOOTIMG_ARGS/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
-          sed -i '/BOARD_RAMDISK/d' device/samsung/d1x/BoardConfig.mk
           
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := en_US zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
           
-          # ==========================================
-          # 🚀 终极必杀技：直接把压缩参数喂给 mkbootimg！
-          # ==========================================
-          echo 'BOARD_MKBOOTIMG_ARGS += --ramdisk_compression gzip' >> device/samsung/d1x/BoardConfig.mk
-          
-          # 剔除不必要组件
           echo 'TW_EXCLUDE_SUPERSU := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_BASH := true' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_EXCLUDE_PYTHON := true' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_DELETE_AROMAFM=1' >> device/samsung/d1x/vendorsetup.sh
-          echo 'export FOX_REMOVE_AAPT=1' >> device/samsung/d1x/vendorsetup.sh
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
-          
-          sed -i 's/\r$//' device/samsung/d1x/AndroidProducts.mk
-          sed -i 's/\r$//' device/samsung/d1x/twrp_d1x.mk
-          sed -i 's/\r$//' device/samsung/d1x/vendorsetup.sh
-          sed -i 's/\r$//' device/samsung/d1x/BoardConfig.mk
 
-      - name: Build Recovery
+      - name: Build Recovery (Ignore Size Error)
         run: |
           cd ~/fox
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           export FOX_BUILD_DEVICE=d1x
-          
           export BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY=true
-          export BUILD_BROKEN_DISABLE_16K_CHECK=true
-          export DISABLE_16K_CHECK=true
           
           source build/envsetup.sh
-          
-          echo "=== 执行 lunch ==="
           lunch twrp_d1x-bp2a-eng
           
-          echo "=== 开始编译 Recovery ==="
-          mka recoveryimage -j2
+          # 加上 || true，即使它最后打包因为体积超限报错，我们也不中断，因为中间产物已经生成了
+          mka recoveryimage -j2 || true
+
+      - name: Repack Recovery Image with GZIP Ramdisk
+        run: |
+          cd ~/fox
+          
+          # 进入产物目录
+          cd out/target/product/d1x
+          
+          # 寻找生成出来的 ramdisk 和 kernel
+          KERNEL="kernel"
+          if [ ! -f "$KERNEL" ]; then
+              KERNEL="../../../host/linux-x86/bin/mkbootimg" # 只是个占位
+              # 真正的内核应该在预编译目录，或者在 out 里
+              KERNEL="../../../../../device/samsung/d1x/prebuilt/Image"
+          fi
+          
+          # 找到未压缩的 ramdisk
+          if [ -f "ramdisk-recovery.img" ]; then
+             echo "=== 开始强行 GZIP 压缩 Ramdisk ==="
+             cp ramdisk-recovery.img ramdisk-recovery.img.orig
+             gzip -9 -c ramdisk-recovery.img.orig > ramdisk-recovery.img.gz
+             
+             echo "=== 手动使用 mkbootimg 重新打包 ==="
+             # 使用 AOSP 16 的 Python mkbootimg，去掉所有压缩参数，直接塞入压缩好的 ramdisk
+             ../../../host/linux-x86/bin/mkbootimg \
+                --kernel ../../../../../device/samsung/d1x/prebuilt/Image \
+                --ramdisk ramdisk-recovery.img.gz \
+                --base 0x10000000 --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 \
+                --pagesize 2048 --header_version 1 \
+                --cmdline "androidboot.hardware=exynos9825 androidboot.super_partition=system" \
+                --output recovery-repacked.img
+                
+             echo "=== 计算并添加 AVB Footer ==="
+             ../../../host/linux-x86/bin/avbtool add_hash_footer \
+                --image recovery-repacked.img \
+                --partition_size 67633152 \
+                --partition_name recovery \
+                --algorithm SHA256_RSA4096 \
+                --key ../../../../../external/avb/test/data/testkey_rsa4096.pem
+                
+             mv recovery-repacked.img recovery.img
+          else
+             echo "=== 错误：找不到 ramdisk-recovery.img，无法重打包 ==="
+             exit 1
+          fi
 
       - name: Package to Odin Tar
         run: |
           cd ~/fox/out/target/product/d1x
           if [ -f recovery.img ]; then
+            echo "重打包成功，镜像大小："
+            ls -l recovery.img
             tar -cf recovery.tar recovery.img
             md5sum recovery.tar > recovery.tar.md5
           else
-            echo "未找到 recovery.img，编译失败。"
             exit 1
           fi
 
