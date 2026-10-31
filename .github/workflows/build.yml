@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - GZIP Compression
+name: Build OrangeFox 16.0 (d1x) - Final GZIP
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -108,6 +108,7 @@ jobs:
           sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_RAMDISK/d' device/samsung/d1x/BoardConfig.mk
           
           # 语言配置
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
@@ -159,7 +160,8 @@ jobs:
           lunch twrp_d1x-bp2a-eng
           
           echo "=== 开始编译 Recovery (开启 GZIP 极致压缩) ==="
-          mka recovery.img -j2
+          # 注意这里：目标名称必须完全写对
+          mka recoveryimage -j2
 
       - name: Package to Odin Tar
         run: |
