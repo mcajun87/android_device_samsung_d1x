@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Manual Pack
+name: Build OrangeFox 16.0 (d1x) - Absolute Pack
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -119,51 +119,51 @@ jobs:
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
           
-          # 加上 || true，即使它最后打包因为体积超限报错，我们也不中断，因为中间产物已经生成了
           mka recoveryimage -j2 || true
 
       - name: Repack Recovery Image with GZIP Ramdisk
         run: |
-          cd ~/fox
+          # 定义所有的绝对路径，绝对不迷路
+          export HOME_DIR=$HOME
+          MKBootImg=$HOME_DIR/fox/out/host/linux-x86/bin/mkbootimg
+          AVBTOOL=$HOME_DIR/fox/out/host/linux-x86/bin/avbtool
+          KERNEL_IMG=$HOME_DIR/fox/device/samsung/d1x/prebuilt/Image
+          TESTKEY=$HOME_DIR/fox/external/avb/test/data/testkey_rsa4096.pem
+          OUT_DIR=$HOME_DIR/fox/out/target/product/d1x
           
-          # 进入产物目录
-          cd out/target/product/d1x
+          cd $OUT_DIR
           
-          # 寻找生成出来的 ramdisk 和 kernel
-          KERNEL="kernel"
-          if [ ! -f "$KERNEL" ]; then
-              KERNEL="../../../host/linux-x86/bin/mkbootimg" # 只是个占位
-              # 真正的内核应该在预编译目录，或者在 out 里
-              KERNEL="../../../../../device/samsung/d1x/prebuilt/Image"
-          fi
-          
-          # 找到未压缩的 ramdisk
           if [ -f "ramdisk-recovery.img" ]; then
              echo "=== 开始强行 GZIP 压缩 Ramdisk ==="
              cp ramdisk-recovery.img ramdisk-recovery.img.orig
              gzip -9 -c ramdisk-recovery.img.orig > ramdisk-recovery.img.gz
              
              echo "=== 手动使用 mkbootimg 重新打包 ==="
-             # 使用 AOSP 16 的 Python mkbootimg，去掉所有压缩参数，直接塞入压缩好的 ramdisk
-             ../../../host/linux-x86/bin/mkbootimg \
-                --kernel ../../../../../device/samsung/d1x/prebuilt/Image \
+             $MKBootImg \
+                --kernel $KERNEL_IMG \
                 --ramdisk ramdisk-recovery.img.gz \
-                --base 0x10000000 --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 \
-                --pagesize 2048 --header_version 1 \
+                --base 0x10000000 \
+                --kernel_offset 0x00008000 \
+                --ramdisk_offset 0x01000000 \
+                --tags_offset 0x00000100 \
+                --pagesize 2048 \
+                --header_version 1 \
                 --cmdline "androidboot.hardware=exynos9825 androidboot.super_partition=system" \
                 --output recovery-repacked.img
                 
              echo "=== 计算并添加 AVB Footer ==="
-             ../../../host/linux-x86/bin/avbtool add_hash_footer \
+             $AVBTOOL add_hash_footer \
                 --image recovery-repacked.img \
                 --partition_size 67633152 \
                 --partition_name recovery \
                 --algorithm SHA256_RSA4096 \
-                --key ../../../../../external/avb/test/data/testkey_rsa4096.pem
+                --key $TESTKEY
                 
              mv recovery-repacked.img recovery.img
+             echo "=== 重新打包成功！最终体积： ==="
+             ls -lh recovery.img
           else
-             echo "=== 错误：找不到 ramdisk-recovery.img，无法重打包 ==="
+             echo "=== 错误：找不到 ramdisk-recovery.img ==="
              exit 1
           fi
 
@@ -171,8 +171,6 @@ jobs:
         run: |
           cd ~/fox/out/target/product/d1x
           if [ -f recovery.img ]; then
-            echo "重打包成功，镜像大小："
-            ls -l recovery.img
             tar -cf recovery.tar recovery.img
             md5sum recovery.tar > recovery.tar.md5
           else
