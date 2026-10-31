@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Extreme LZMA
+name: Build OrangeFox 16.0 (d1x) - Safe Slim
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -64,7 +64,7 @@ jobs:
             exit 1
           fi
 
-      - name: Clone Device Trees & Hack LZMA Compression
+      - name: Clone Device Trees & Remove FoxCLI
         run: |
           cd ~/fox
           mkdir -p device/samsung
@@ -78,20 +78,6 @@ jobs:
           rm -rf external/foxcli
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
           sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
-          
-          # 🚀 核武器 1：强改 AOSP 底层，把 Ramdisk 默认的 LZ4 压缩改为 LZMA
-          echo "=== 强制修改底层压缩算法为 LZMA ==="
-          sed -i 's/LZ4/LZMA/g' build/make/core/Makefile || true
-          sed -i 's/lz4/lzma/g' build/make/core/Makefile || true
-          sed -i 's/LZ4/LZMA/g' build/make/core/config.mk || true
-          
-          # 🚀 核武器 2：物理删除除中英繁之外的其他语言包，释放空间
-          echo "=== 清理多余语言包 ==="
-          cd bootable/recovery
-          # 删除除了 en, zh_CN, zh_TW 之外的字体和语言资源
-          find . -type d -name "*_lang*" ! -name "*en*" ! -name "*zh*" -exec rm -rf {} + || true
-          find . -type f -name "*_lang*" ! -name "*en*" ! -name "*zh*" -exec rm -f {} + || true
-          cd ~/fox
 
       - name: Force Fix Makefiles & Extreme Slim
         run: |
@@ -116,31 +102,33 @@ jobs:
           echo 'PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false' >> device/samsung/d1x/twrp_d1x.mk
           echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/twrp_d1x.mk
           
+          # 清理之前可能留下的错误配置
           sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
           
+          # 正确的 LZMA 配置（绝不改底层 Makefile）
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := en_US zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
-          echo 'BOARD_RAMDISK_USE_LZMA := true' >> device/samsung/d1x/BoardConfig.mk
-          echo 'BOARD_RAMDISK_COMPRESSION_METHOD := lzma' >> device/samsung/d1x/BoardConfig.mk
           
-          # 删减不需要的大型组件，压榨空间
+          # 剔除所有不必要的大型组件
           echo 'TW_EXCLUDE_SUPERSU := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_BASH := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_PYTHON := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'OF_DISABLE_MIUI_SPECIFIC_FEATURES := 1' >> device/samsung/d1x/BoardConfig.mk
           
-          # 极简打包：直接删掉 recovery root 里的巨型资源，只留核心
-          echo 'BOARD_RECOVERY_IMAGE_PREPARE += rm -rf $(TARGET_RECOVERY_ROOT_OUT)/twres/images/hdpi/*; rm -rf $(TARGET_RECOVERY_ROOT_OUT)/sbin/busybox*;' >> device/samsung/d1x/BoardConfig.mk
+          # 终极物理清理：强制删掉 Recovery 根目录下的高分辨率无用图片（能腾出好几MB）
+          echo 'BOARD_RECOVERY_IMAGE_PREPARE += rm -rf $(TARGET_RECOVERY_ROOT_OUT)/twres/images/xxhdpi/*; rm -rf $(TARGET_RECOVERY_ROOT_OUT)/twres/images/xhdpi/*;' >> device/samsung/d1x/BoardConfig.mk
           
+          # 启动项变量瘦身
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_DELETE_AROMAFM=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_REMOVE_AAPT=1' >> device/samsung/d1x/vendorsetup.sh
@@ -168,7 +156,7 @@ jobs:
           echo "=== 执行 lunch ==="
           lunch twrp_d1x-bp2a-eng
           
-          echo "=== 开始编译 Recovery (已开启 LZMA 极限压缩+物理删减语言) ==="
+          echo "=== 开始编译 Recovery (官方 LZMA 极致瘦身) ==="
           mka recoveryimage -j2
 
       - name: Package to Odin Tar
