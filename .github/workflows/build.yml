@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Safe Slim
+name: Build OrangeFox 16.0 (d1x) - GZIP Compression
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -79,7 +79,7 @@ jobs:
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
           sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
 
-      - name: Force Fix Makefiles & Extreme Slim
+      - name: Force Fix Makefiles & Extreme GZIP Compression
         run: |
           cd ~/fox
           
@@ -102,31 +102,33 @@ jobs:
           echo 'PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false' >> device/samsung/d1x/twrp_d1x.mk
           echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 清理之前可能留下的错误配置
+          # 清理之前的配置
           sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
           
-          # 正确的 LZMA 配置（绝不改底层 Makefile）
+          # 语言配置
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := en_US zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
+          
+          # ==========================================
+          # 🚀 终极方案：强制指定使用 GZIP 压缩 Ramdisk
+          # ==========================================
+          echo 'BOARD_RAMDISK_COMPRESSION_METHOD := gzip' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_RAMDISK_USE_GZIP := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
           
-          # 剔除所有不必要的大型组件
+          # 剔除不必要的大型组件
           echo 'TW_EXCLUDE_SUPERSU := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_BASH := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_PYTHON := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
-          echo 'OF_DISABLE_MIUI_SPECIFIC_FEATURES := 1' >> device/samsung/d1x/BoardConfig.mk
-          
-          # 终极物理清理：强制删掉 Recovery 根目录下的高分辨率无用图片（能腾出好几MB）
-          echo 'BOARD_RECOVERY_IMAGE_PREPARE += rm -rf $(TARGET_RECOVERY_ROOT_OUT)/twres/images/xxhdpi/*; rm -rf $(TARGET_RECOVERY_ROOT_OUT)/twres/images/xhdpi/*;' >> device/samsung/d1x/BoardConfig.mk
           
           # 启动项变量瘦身
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
@@ -156,8 +158,8 @@ jobs:
           echo "=== 执行 lunch ==="
           lunch twrp_d1x-bp2a-eng
           
-          echo "=== 开始编译 Recovery (官方 LZMA 极致瘦身) ==="
-          mka recoveryimage -j2
+          echo "=== 开始编译 Recovery (开启 GZIP 极致压缩) ==="
+          mka recovery.img -j2
 
       - name: Package to Odin Tar
         run: |
