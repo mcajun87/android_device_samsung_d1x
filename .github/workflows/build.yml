@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - MagiskBoot Hack
+name: Build OrangeFox 16.0 (d1x) - Final Victory
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -41,7 +41,7 @@ jobs:
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio
 
       - name: Init and Sync Repo
         run: |
@@ -141,7 +141,7 @@ jobs:
              mkdir -p rd_root && cd rd_root
              cpio -idmv < ../ramdisk.cpio
              
-             echo "=== 物理删除超大无用图片 (腾出至少 5MB 空间) ==="
+             echo "=== 物理删除超大无用图片和多余语言包 ==="
              rm -rf twres/images/land || true
              rm -rf twres/images/mdpi || true
              rm -rf twres/images/hdpi || true
@@ -149,15 +149,15 @@ jobs:
              rm -rf twres/images/xxxhdpi || true
              rm -rf twres/languages/zh_TW* || true
              
-             echo "=== 重新打包 ramdisk ==="
-             find . | cpio -o -H newc > ../ramdisk_clean.cpio
+             echo "=== 重新打包 ramdisk.cpio ==="
+             find . | cpio -o -H newc > ../ramdisk.cpio
              cd ..
              
              echo "=== 使用 MagiskBoot 重新打包 recovery.img ==="
-             ./lib/x86_64/libmagiskboot.so repack -f recovery.img ../ramdisk_clean.cpio
+             # 直接覆盖原有的 ramdisk.cpio，让 magiskboot 自己重新封包
+             ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
              
-             # 替换回原文件
-             mv new-boot.img recovery_unsigned.img
+             mv new-recovery.img recovery_unsigned.img
              
              echo "=== 添加 AVB 签名 ==="
              $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
