@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - LZMA Pack
+name: Build OrangeFox 16.0 (d1x) - MagiskBoot Hack
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -41,7 +41,7 @@ jobs:
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma xz-utils
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma
 
       - name: Init and Sync Repo
         run: |
@@ -94,7 +94,6 @@ jobs:
           sed -i '/BOARD_MKBOOTIMG_ARGS/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
           
-          # 恢复你要求的中英繁三语言，LZMA 压缩绝对塞得下
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := en_US zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
@@ -122,48 +121,57 @@ jobs:
           
           mka recoveryimage -j2 || true
 
-      - name: Repack with LZMA Compression
+      - name: Deep Clean Ramdisk Using MagiskBoot
         run: |
-          export HOME_DIR=$HOME
-          MKBootImg=$HOME_DIR/fox/out/host/linux-x86/bin/mkbootimg
-          AVBTOOL=$HOME_DIR/fox/out/host/linux-x86/bin/avbtool
-          KERNEL_IMG=$HOME_DIR/fox/device/samsung/d1x/prebuilt/Image
-          TESTKEY=$HOME_DIR/fox/external/avb/test/data/testkey_rsa4096.pem
-          OUT_DIR=$HOME_DIR/fox/out/target/product/d1x
+          export OUT_DIR=$HOME/fox/out/target/product/d1x
+          export TESTKEY=$HOME/fox/external/avb/test/data/testkey_rsa4096.pem
           
           cd $OUT_DIR
           
-          if [ -f "ramdisk-recovery.img" ]; then
-             echo "=== 开始 LZMA 极限压缩 Ramdisk ==="
-             # 核心杀招：使用 LZMA 代替 GZIP
-             lzma -9 -c ramdisk-recovery.img > ramdisk-recovery.img.lzma
+          echo "=== 下载 MagiskBoot 专业解包工具 ==="
+          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
+          unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
+          chmod +x lib/x86_64/libmagiskboot.so
+          
+          echo "=== 使用 MagiskBoot 拆解生成的 recovery.img ==="
+          ./lib/x86_64/libmagiskboot.so unpack recovery.img
+          
+          if [ -f "ramdisk.cpio" ]; then
+             echo "=== 解压 ramdisk.cpio 到本地目录 ==="
+             mkdir -p rd_root && cd rd_root
+             cpio -idmv < ../ramdisk.cpio
              
-             echo "=== 手动使用 mkbootimg 重新打包 ==="
-             $MKBootImg \
-                --kernel $KERNEL_IMG \
-                --ramdisk ramdisk-recovery.img.lzma \
-                --base 0x10000000 \
-                --kernel_offset 0x00008000 \
-                --ramdisk_offset 0x01000000 \
-                --tags_offset 0x00000100 \
-                --pagesize 2048 \
-                --header_version 1 \
-                --cmdline "androidboot.hardware=exynos9825 androidboot.super_partition=system" \
-                --output recovery-repacked.img
-                
-             echo "=== 计算并添加 AVB Footer ==="
-             $AVBTOOL add_hash_footer \
-                --image recovery-repacked.img \
+             echo "=== 物理删除超大无用图片 (腾出至少 5MB 空间) ==="
+             rm -rf twres/images/land || true
+             rm -rf twres/images/mdpi || true
+             rm -rf twres/images/hdpi || true
+             rm -rf twres/images/xhdpi || true
+             rm -rf twres/images/xxxhdpi || true
+             rm -rf twres/languages/zh_TW* || true
+             
+             echo "=== 重新打包 ramdisk ==="
+             find . | cpio -o -H newc > ../ramdisk_clean.cpio
+             cd ..
+             
+             echo "=== 使用 MagiskBoot 重新打包 recovery.img ==="
+             ./lib/x86_64/libmagiskboot.so repack -f recovery.img ../ramdisk_clean.cpio
+             
+             # 替换回原文件
+             mv new-boot.img recovery_unsigned.img
+             
+             echo "=== 添加 AVB 签名 ==="
+             $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
+                --image recovery_unsigned.img \
                 --partition_size 67633152 \
                 --partition_name recovery \
                 --algorithm SHA256_RSA4096 \
                 --key $TESTKEY
                 
-             mv recovery-repacked.img recovery.img
-             echo "=== 重新打包成功！最终体积： ==="
+             mv recovery_unsigned.img recovery.img
+             echo "=== 终极打包成功！当前体积： ==="
              ls -lh recovery.img
           else
-             echo "=== 错误：找不到 ramdisk-recovery.img ==="
+             echo "=== 错误：MagiskBoot 解包失败 ==="
              exit 1
           fi
 
