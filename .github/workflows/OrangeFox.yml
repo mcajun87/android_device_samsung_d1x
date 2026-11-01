@@ -1,0 +1,220 @@
+name: Build OrangeFox 16.0 (d1x) - Slim Ultimate
+run-name: Build d1x by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否发布到 Release？'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Device Tree
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Setup Swap
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio
+
+      - name: Init and Sync Repo
+        run: |
+          mkdir -p ~/fox && cd ~/fox
+          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
+          for i in {1..3}; do
+            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
+            sleep 10
+          done
+          if [ ! -f "build/envsetup.sh" ]; then repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true; fi
+
+      - name: Clone Device Trees & Remove FoxCLI
+        run: |
+          cd ~/fox
+          mkdir -p device/samsung
+          cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+          
+          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
+          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
+          rm -rf external/foxcli
+          sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
+          sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
+
+      - name: Force Fix Makefiles & Enable FOX Slim
+        run: |
+          cd ~/fox
+          
+          echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
+          echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
+          echo '' >> device/samsung/d1x/AndroidProducts.mk
+          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-bp2a-eng' >> device/samsung/d1x/AndroidProducts.mk
+          
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          
+          echo 'PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/twrp_d1x.mk
+          
+          sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_MKBOOTIMG_ARGS/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
+          
+          # 恢复保留 DTBO，确保开机不报错
+          echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
+          
+          # 核心调整：精简繁体中文，只保留简中和英文
+          echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := en_US zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          
+          # 关闭多余组件
+          echo 'TW_EXCLUDE_SUPERSU := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_BASH := true' >> device/samsung/d1x/BoardConfig.mk
+          
+          # 核心：开启官方精简模式
+          echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
+          echo 'export FOX_DELETE_AROMAFM=1' >> device/samsung/d1x/vendorsetup.sh
+          
+          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+
+      - name: Build Recovery (Ignore Size Error)
+        run: |
+          cd ~/fox
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export FOX_BUILD_DEVICE=d1x
+          export BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY=true
+          
+          source build/envsetup.sh
+          lunch twrp_d1x-bp2a-eng
+          
+          mka recoveryimage -j2 || true
+
+      - name: Deep Clean Ramdisk Using MagiskBoot
+        run: |
+          export OUT_DIR=$HOME/fox/out/target/product/d1x
+          export TESTKEY=$HOME/fox/external/avb/test/data/testkey_rsa4096.pem
+          
+          cd $OUT_DIR
+          
+          echo "=== 下载 MagiskBoot 专业解包工具 ==="
+          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
+          unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
+          chmod +x lib/x86_64/libmagiskboot.so
+          
+          echo "=== 使用 MagiskBoot 拆解生成的 recovery.img ==="
+          ./lib/x86_64/libmagiskboot.so unpack recovery.img
+          
+          if [ -f "ramdisk.cpio" ]; then
+             echo "=== 解压 ramdisk.cpio ==="
+             mkdir -p rd_root && cd rd_root
+             cpio -idmv < ../ramdisk.cpio
+             
+             echo "=== 🔥 核心精简：精准切除，保留高清与中文 ==="
+             # 1. 图片精简：保留手机主力的 xxhdpi，删除低分辨率、横屏和极高分辨率
+             rm -rf twres/images/land || true      # 删除横屏
+             rm -rf twres/images/mdpi || true      # 删除极低分辨率
+             rm -rf twres/images/hdpi || true      # 删除低分辨率
+             rm -rf twres/images/xhdpi || true     # 删除中低分辨率
+             rm -rf twres/images/xxxhdpi || true   # 删除极高分辨率
+             
+             # 2. 语言包精简：保留简中和英文，物理删除繁体
+             rm -rf twres/languages/zh_TW* || true
+             
+             # 3. 大文件清理：干掉 Python3，不影响刷机
+             rm -rf system/bin/python3* || true
+             rm -rf system/lib64/libpython* || true
+             
+             echo "=== 重新打包 ramdisk.cpio ==="
+             find . | cpio -o -H newc > ../ramdisk.cpio
+             cd ..
+             
+             echo "=== 使用 MagiskBoot 重新打包 recovery.img ==="
+             ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
+             
+             mv new-recovery.img recovery_unsigned.img
+             
+             echo "=== 添加 AVB 签名 ==="
+             $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
+                --image recovery_unsigned.img \
+                --partition_size 67633152 \
+                --partition_name recovery \
+                --algorithm SHA256_RSA4096 \
+                --key $TESTKEY
+                
+             mv recovery_unsigned.img recovery.img
+             echo "=== 终极打包成功！当前体积： ==="
+             ls -lh recovery.img
+          else
+             echo "=== 错误：MagiskBoot 解包失败 ==="
+             exit 1
+          fi
+
+      - name: Package to Odin Tar
+        run: |
+          cd ~/fox/out/target/product/d1x
+          if [ -f recovery.img ]; then
+            tar -cf recovery.tar recovery.img
+            md5sum recovery.tar > recovery.tar.md5
+          else
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-d1x-Recovery
+          path: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
+
+      - name: Publish Release
+        if: github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OrangeFox-d1x-${{ github.run_id }}
+          tag_name: ${{ github.run_id }}
+          files: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
