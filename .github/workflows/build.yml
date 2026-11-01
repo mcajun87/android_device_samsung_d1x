@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Slim Ultimate
+name: 构建Build OrangeFox 16.0 (d1x)-激进阉割版
 run-name: Build d1x by ${{ github.actor }}
 
 on:
