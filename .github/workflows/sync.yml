@@ -1,0 +1,227 @@
+name: Build OrangeFox 16.0 (d1x) - Final Extreme Slim
+run-name: Build d1x by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否发布到 Release？'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Setup Swap
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio
+
+      - name: Init and Sync Repo
+        run: |
+          mkdir -p ~/fox && cd ~/fox
+          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
+          repo sync -c -j4 --no-clone-bundle --no-tags --force-sync
+
+      - name: Clone Device Trees
+        run: |
+          cd ~/fox
+          mkdir -p device/samsung
+          cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+          
+          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
+          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
+          
+          rm -rf external/foxcli
+          sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
+          sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
+
+      - name: Force Fix Makefiles
+        run: |
+          cd ~/fox
+          
+          echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
+          echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
+          echo '' >> device/samsung/d1x/AndroidProducts.mk
+          echo 'COMMON_LUNCH_CHOICES := \' >> device/samsung/d1x/AndroidProducts.mk
+          echo '    twrp_d1x-bp2a-eng' >> device/samsung/d1x/AndroidProducts.mk
+          
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)' > device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, vendor/twrp/config/common.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo '$(call inherit-product, device/samsung/d1x/device.mk)' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_DEVICE := d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_NAME := twrp_d1x' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_BRAND := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
+          
+          echo 'PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false' >> device/samsung/d1x/twrp_d1x.mk
+          echo 'BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY := true' >> device/samsung/d1x/twrp_d1x.mk
+          
+          sed -i '/BOARD_KERNEL_IMAGE_NAME/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_INCLUDE_RECOVERY_DTBO/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_PREBUILT_DTBOIMAGE/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_MKBOOTIMG_ARGS/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_AVB/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/TW_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
+          
+          # 官方内核 + DTBO + AVB
+          echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_MKBOOTIMG_ARGS := --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 --header_version 1' >> device/samsung/d1x/BoardConfig.mk
+          
+          echo 'BOARD_AVB_ENABLE := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_KEY_PATH := external/avb/test/data/testkey_rsa2048.pem' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_RECOVERY_KEY_PATH := external/avb/test/data/testkey_rsa2048.pem' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
+          
+          echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := en_US zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          
+          echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
+          echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
+          echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
+          
+          sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
+
+      - name: Build Recovery (Ignore Size Error)
+        run: |
+          cd ~/fox
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export FOX_BUILD_DEVICE=d1x
+          export GOGC=20
+          export _JAVA_OPTIONS="-Xmx8G -XX:+UseG1GC"
+          
+          source build/envsetup.sh
+          lunch twrp_d1x-bp2a-eng
+          
+          mka recoveryimage -j2 || true
+
+      - name: Force Shrink Ramdisk using MagiskBoot
+        run: |
+          export OUT_DIR=$HOME/fox/out/target/product/d1x
+          cd $OUT_DIR
+          
+          if [ -f "recovery.img" ]; then
+             echo "=== 开始下载 MagiskBoot 强行瘦身 ==="
+             wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
+             unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
+             chmod +x lib/x86_64/libmagiskboot.so
+             
+             ./lib/x86_64/libmagiskboot.so unpack recovery.img
+             
+             if [ -f "ramdisk.cpio" ]; then
+                mkdir -p rd_root && cd rd_root
+                cpio -idmv < ../ramdisk.cpio
+                
+                echo "=== 🔥 终极暴力清理，不惜一切代价压进 15MB ==="
+                # 1. 删除所有分辨率图片，只留 xxhdpi
+                rm -rf twres/images/land || true
+                rm -rf twres/images/mdpi || true
+                rm -rf twres/images/hdpi || true
+                rm -rf twres/images/xhdpi || true
+                rm -rf twres/images/xxxhdpi || true
+                
+                # 2. 删繁中和所有额外字体
+                rm -rf twres/languages/zh_TW* || true
+                rm -rf twres/fonts/* || true
+                
+                # 3. 删除极度占空间的无关二进制文件
+                rm -rf system/bin/python3* || true
+                rm -rf system/lib64/libpython* || true
+                rm -rf system/bin/bash || true
+                rm -rf system/bin/nano || true
+                rm -rf system/bin/vim || true
+                
+                find . | cpio -o -H newc > ../ramdisk.cpio
+                cd ..
+                
+                ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
+                mv new-recovery.img recovery_unsigned.img
+                
+                echo "=== 重新签名 ==="
+                $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
+                   --image recovery_unsigned.img \
+                   --partition_size 67633152 \
+                   --partition_name recovery \
+                   --algorithm SHA256_RSA2048 \
+                   --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
+                   
+                mv recovery_unsigned.img recovery.img
+                echo "=== 瘦身完成，最终体积 ==="
+                ls -lh recovery.img
+             else
+                echo "=== 解包失败，找不到 ramdisk.cpio ==="
+                exit 1
+             fi
+          else
+             echo "=== 编译没有生成 recovery.img ==="
+             exit 1
+          fi
+
+      - name: Package to Odin Tar
+        run: |
+          cd ~/fox/out/target/product/d1x
+          if [ -f recovery.img ]; then
+            tar -cf recovery.tar recovery.img
+            md5sum recovery.tar > recovery.tar.md5
+          else
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-d1x-Recovery
+          path: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
+
+      - name: Publish Release
+        if: github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OrangeFox-d1x-${{ github.run_id }}
+          tag_name: ${{ github.run_id }}
+          files: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
