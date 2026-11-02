@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio xz-utils
 
       - name: Init and Sync Repo
         run: |
@@ -95,7 +95,6 @@ jobs:
           sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
           
-          # 官方内核 + DTBO + AVB
           echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
@@ -108,10 +107,10 @@ jobs:
           echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
           
-          # 只保留简中和繁中
+          # 语言配置：简中、繁中、英文，默认简中
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := zh_CN zh_TW en' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
@@ -119,7 +118,7 @@ jobs:
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
 
-      - name: Build Recovery (Ignore Size Error)
+      - name: Build Recovery
         run: |
           cd ~/fox
           export ALLOW_MISSING_DEPENDENCIES=true
@@ -130,69 +129,83 @@ jobs:
           
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
-          
           mka recoveryimage -j2 || true
 
-      - name: Force Shrink Ramdisk using MagiskBoot
+      - name: Pack, Compress and Sign
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
           
-          if [ -f "recovery.img" ]; then
-             echo "=== 开始下载 MagiskBoot 强行瘦身 ==="
-             wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
-             unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
-             chmod +x lib/x86_64/libmagiskboot.so
-             
-             ./lib/x86_64/libmagiskboot.so unpack recovery.img
-             
-             if [ -f "ramdisk.cpio" ]; then
-                mkdir -p rd_root && cd rd_root
-                cpio -idmv < ../ramdisk.cpio
-                
-                echo "=== 🔥 精准瘦身，保留字体，只删英文和图片 ==="
-                # 1. 删除所有不需要的图片分辨率，只留 xxhdpi
-                rm -rf twres/images/land || true
-                rm -rf twres/images/mdpi || true
-                rm -rf twres/images/hdpi || true
-                rm -rf twres/images/xhdpi || true
-                rm -rf twres/images/xxxhdpi || true
-                
-                # 2. 删除英文语言包，严格保留 zh_CN 和 zh_TW
-                rm -rf twres/languages/en* || true
-                
-                # 3. 删除极度占空间的无关二进制文件 (不动字体 twres/fonts)
-                rm -rf system/bin/python3* || true
-                rm -rf system/lib64/libpython* || true
-                rm -rf system/bin/bash || true
-                rm -rf system/bin/nano || true
-                rm -rf system/bin/vim || true
-                
-                find . | cpio -o -H newc > ../ramdisk.cpio
-                cd ..
-                
-                ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
-                mv new-recovery.img recovery_unsigned.img
-                
-                echo "=== 重新签名 ==="
-                $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
-                   --image recovery_unsigned.img \
-                   --partition_size 67633152 \
-                   --partition_name recovery \
-                   --algorithm SHA256_RSA2048 \
-                   --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
-                   
-                mv recovery_unsigned.img recovery.img
-                echo "=== 瘦身完成，最终体积 ==="
-                ls -lh recovery.img
-             else
-                echo "=== 解包失败，找不到 ramdisk.cpio ==="
-                exit 1
-             fi
-          else
+          if [ ! -f "recovery.img" ]; then
              echo "=== 编译没有生成 recovery.img ==="
              exit 1
           fi
+          
+          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
+          unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
+          chmod +x lib/x86_64/libmagiskboot.so
+          
+          ./lib/x86_64/libmagiskboot.so unpack recovery.img
+          
+          RAMDISK_SRC=""
+          for f in ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.lzma ramdisk.cpio.xz; do
+              if [ -f "$f" ]; then RAMDISK_SRC="$f"; break; fi
+          done
+          
+          mkdir -p rd_root && cd rd_root
+          case "$RAMDISK_SRC" in
+              *.gz)   gzip -dc "../$RAMDISK_SRC" | cpio -idmuv 2>/dev/null ;;
+              *.lzma) lzma -dc "../$RAMDISK_SRC" | cpio -idmuv 2>/dev/null ;;
+              *.xz)   xz -dc "../$RAMDISK_SRC" | cpio -idmuv 2>/dev/null ;;
+              *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
+          esac
+          
+          echo "=== 按要求清理语言和时区 ==="
+          # 1. 语言只保留 en, zh_CN, zh_TW
+          if [ -d "twres/languages" ]; then
+              find twres/languages -type f ! -name 'en*' ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
+          fi
+          
+          # 2. 时区只保留上海
+          if [ -d "system/usr/share/zoneinfo" ]; then
+              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" ! -name "zone.tab" -delete || true
+          fi
+          
+          # 3. 先不动图片，直接打 LZMA 极限压缩
+          echo "=== LZMA 极限压缩打包 ==="
+          find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
+          cd ..
+          rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.xz 2>/dev/null || true
+          
+          ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img > /dev/null 2>&1
+          mv new-recovery.img recovery_unsigned.img
+          
+          PARTITION_SIZE=67633152
+          MAX_SAFE_SIZE=67563520
+          UNSIGNED_SIZE=$(stat -c%s "recovery_unsigned.img")
+          
+          echo "=================================================="
+          echo "压缩后未签名镜像大小: $UNSIGNED_SIZE 字节"
+          echo "允许的最大安全体积: $MAX_SAFE_SIZE 字节"
+          echo "=================================================="
+          
+          if [ "$UNSIGNED_SIZE" -ge "$MAX_SAFE_SIZE" ]; then
+             echo "❌ 错误：即使使用 LZMA 压缩，体积依然超标！"
+             echo "👉 建议：需要继续删除图片（如 twres/images/xxxhdpi）或无关二进制文件。"
+             exit 1
+          fi
+          
+          echo "✅ 体积达标，开始 AVB 签名..."
+          $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
+             --image recovery_unsigned.img \
+             --partition_size $PARTITION_SIZE \
+             --partition_name recovery \
+             --algorithm SHA256_RSA2048 \
+             --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
+             
+          mv recovery_unsigned.img recovery.img
+          echo "🎉 签名完成，最终生成的 recovery.img 体积:"
+          ls -lh recovery.img
 
       - name: Package to Odin Tar
         run: |
