@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Perfect Final
+name: Build OrangeFox 16.0 (d1x) - Ultimate
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -47,11 +47,7 @@ jobs:
         run: |
           mkdir -p ~/fox && cd ~/fox
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
-          for i in {1..3}; do
-            repo sync -c -j4 --no-clone-bundle --no-tags --force-sync && break
-            sleep 10
-          done
-          if [ ! -f "build/envsetup.sh" ]; then repo sync -c -j1 --no-clone-bundle --no-tags --force-sync || true; fi
+          repo sync -c -j4 --no-clone-bundle --no-tags --force-sync
 
       - name: Clone Device Trees & Remove FoxCLI
         run: |
@@ -62,6 +58,8 @@ jobs:
           
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
           find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
+          
+          # 移除会导致编译中断的 foxcli
           rm -rf external/foxcli
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
           sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
@@ -94,18 +92,41 @@ jobs:
           sed -i '/BOARD_MKBOOTIMG_ARGS/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BUILD_BROKEN_ELF_PREBUILT_PACKAGE_COPY/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BOARD_INCLUDE_RECOVERY_DTBO/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_KERNEL_IMAGE_NAME/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/BOARD_AVB/d' device/samsung/d1x/BoardConfig.mk
+          sed -i '/TW_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
           
-          # 保留 DTBO，确保完美开机
+          # ==========================================
+          # 🌟 核心修复 1：官方内核 + 官方 1MB DTBO
+          # ==========================================
+          echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
           
-          # 中英双语，默认中文
+          # ==========================================
+          # 🌟 核心修复 2：解决 vbmeta 签名拒绝 (Public key rejected)
+          # ==========================================
+          echo 'BOARD_AVB_ENABLE := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_KEY_PATH := external/avb/test/data/testkey_rsa2048.pem' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_RECOVERY_KEY_PATH := external/avb/test/data/testkey_rsa2048.pem' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
+          echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
+          
+          # ==========================================
+          # 🌟 核心修复 3：中英繁三语支持
+          # ==========================================
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := en_US zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := en_US zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
           
-          # 剔除掉完全没用的组件，但不影响核心功能
+          # ==========================================
+          # 🌟 核心修复 4：去除冗余，LZMA 极限压缩
+          # ==========================================
           echo 'TW_EXCLUDE_SUPERSU := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
+          echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
 
@@ -119,7 +140,6 @@ jobs:
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
           
-          # 直接开火！18MB 内核完美吃下所有组件，不会再报体积错误！
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar
@@ -129,7 +149,6 @@ jobs:
             tar -cf recovery.tar recovery.img
             md5sum recovery.tar > recovery.tar.md5
           else
-            echo "未找到 recovery.img，编译失败。"
             exit 1
           fi
 
