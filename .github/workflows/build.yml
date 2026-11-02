@@ -112,7 +112,16 @@ jobs:
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := zh_CN zh_TW en' >> device/samsung/d1x/BoardConfig.mk
           
+          # 编译期极限裁剪组件
+          echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TWRP_INCLUDE_LOGCAT := false' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_INCLUDE_CRYPTO := false' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_USE_TOOLBOX := true' >> device/samsung/d1x/BoardConfig.mk
+
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
+          echo 'export FOX_REMOVE_BASH=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
           
@@ -171,7 +180,24 @@ jobs:
               find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" ! -name "zone.tab" -delete || true
           fi
           
-          # 3. 先不动图片，直接打 LZMA 极限压缩
+          # 3. 精准清理 UI 资源（适配 Note10 1080x2280 屏幕）
+          echo "=== 精准清理界面资源与二进制 ==="
+          if [ -d "twres" ]; then
+              # 删除 xxxhdpi (640dpi)，这是给 2K/4K 屏幕用的，删掉能释放大量空间
+              find twres -type d -name "xxxhdpi" -exec rm -rf {} + || true
+              # 保留 xxhdpi, xhdpi, hdpi 以适配 1080p 屏幕
+              
+              # 清理异常大体积的图片文件
+              find twres -type f \( -name "*.png" -o -name "*.jpg" \) -size +200k -delete || true
+          fi
+          
+          # 清理多余字体和无用二进制文件
+          if [ -d "twres/fonts" ]; then
+              find twres/fonts -type f ! -name "Roboto-Regular.ttf" ! -name "DroidSansMono.ttf" -delete || true
+          fi
+          rm -f sbin/foxcli sbin/gnutar sbin/gnused sbin/gnudate 2>/dev/null || true
+          
+          # 4. LZMA 极限压缩打包
           echo "=== LZMA 极限压缩打包 ==="
           find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
           cd ..
@@ -191,7 +217,6 @@ jobs:
           
           if [ "$UNSIGNED_SIZE" -ge "$MAX_SAFE_SIZE" ]; then
              echo "❌ 错误：即使使用 LZMA 压缩，体积依然超标！"
-             echo "👉 建议：需要继续删除图片（如 twres/images/xxxhdpi）或无关二进制文件。"
              exit 1
           fi
           
