@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Ultimate Slim Fixed
+name: Build OrangeFox 16.0 (d1x) - OOM Fix
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
@@ -27,6 +27,12 @@ jobs:
           large-packages: true
           docker-images: true
           swap-storage: true
+
+      # 云端必须加 Swap，极其关键！
+      - name: Setup Swap
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
 
       - name: Install Dependencies
         run: |
@@ -119,10 +125,15 @@ jobs:
           export LC_ALL=C
           export FOX_BUILD_DEVICE=d1x
           
+          # ==========================================
+          # 🌟 防爆内存终极参数！必须加！
+          # ==========================================
+          export GOGC=20
+          export _JAVA_OPTIONS="-Xmx8G -XX:+UseG1GC"
+          
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
           
-          # 关键修改：将 -j$(nproc) 改为 -j2，大幅降低内存消耗
           mka recoveryimage -j2 || true
 
       - name: Force Shrink Ramdisk using MagiskBoot
