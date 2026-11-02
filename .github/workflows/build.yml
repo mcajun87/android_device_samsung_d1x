@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - Ultimate Slim
+name: Build OrangeFox 16.0 (d1x) - Ultimate Slim Fixed
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -42,7 +42,7 @@ jobs:
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_16.0 --depth=1
           repo sync -c -j4 --no-clone-bundle --no-tags --force-sync
 
-      - name: Clone Device Trees & Fix Mkbootimg
+      - name: Clone Device Trees
         run: |
           cd ~/fox
           mkdir -p device/samsung
@@ -55,10 +55,6 @@ jobs:
           rm -rf external/foxcli
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
           sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
-
-          # 替换为旧版稳定的 mkbootimg
-          rm -rf system/tools/mkbootimg
-          git clone --depth=1 https://android.googlesource.com/platform/system/tools/mkbootimg -b android-12.1.0_r1 system/tools/mkbootimg
 
       - name: Force Fix Makefiles
         run: |
@@ -99,6 +95,7 @@ jobs:
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_MKBOOTIMG_ARGS := --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 --header_version 1' >> device/samsung/d1x/BoardConfig.mk
+          
           echo 'BOARD_AVB_ENABLE := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_KEY_PATH := external/avb/test/data/testkey_rsa2048.pem' >> device/samsung/d1x/BoardConfig.mk
@@ -106,14 +103,12 @@ jobs:
           echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
           
-          # 注意：为了省空间，砍掉繁体，只留简中和英文
+          # 只保留中英，砍掉繁中
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := en_US zh_CN' >> device/samsung/d1x/BoardConfig.mk
           
-          # 开启官方极限精简
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
-          
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
           
@@ -129,6 +124,7 @@ jobs:
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
           
+          # 加上 || true，这样即使最后因为体积超限报错，也不会中断，会把文件留在 out 目录里
           mka recoveryimage -j$(nproc) || true
 
       - name: Force Shrink Ramdisk using MagiskBoot
@@ -136,42 +132,50 @@ jobs:
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
           
-          echo "=== 下载 MagiskBoot 强行瘦身 ==="
-          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
-          unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
-          chmod +x lib/x86_64/libmagiskboot.so
-          
-          ./lib/x86_64/libmagiskboot.so unpack recovery.img
-          
-          if [ -f "ramdisk.cpio" ]; then
-             mkdir -p rd_root && cd rd_root
-             cpio -idmv < ../ramdisk.cpio
+          if [ -f "recovery.img" ]; then
+             echo "=== 找到 recovery.img，开始下载 MagiskBoot 强行瘦身 ==="
+             wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
+             unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
+             chmod +x lib/x86_64/libmagiskboot.so
              
-             echo "=== 暴力删除多余图片和繁中 ==="
-             rm -rf twres/images/land || true
-             rm -rf twres/images/mdpi || true
-             rm -rf twres/images/hdpi || true
-             rm -rf twres/images/xhdpi || true
-             rm -rf twres/images/xxxhdpi || true
-             rm -rf twres/languages/zh_TW* || true
+             ./lib/x86_64/libmagiskboot.so unpack recovery.img
              
-             find . | cpio -o -H newc > ../ramdisk.cpio
-             cd ..
-             
-             ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
-             mv new-recovery.img recovery_unsigned.img
-             
-             echo "=== 重新签名 ==="
-             $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
-                --image recovery_unsigned.img \
-                --partition_size 67633152 \
-                --partition_name recovery \
-                --algorithm SHA256_RSA2048 \
-                --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
+             if [ -f "ramdisk.cpio" ]; then
+                mkdir -p rd_root && cd rd_root
+                cpio -idmv < ../ramdisk.cpio
                 
-             mv recovery_unsigned.img recovery.img
-             echo "=== 瘦身完成，最终体积 ==="
-             ls -lh recovery.img
+                echo "=== 暴力删除多余图片和繁中 ==="
+                rm -rf twres/images/land || true
+                rm -rf twres/images/mdpi || true
+                rm -rf twres/images/hdpi || true
+                rm -rf twres/images/xhdpi || true
+                rm -rf twres/images/xxxhdpi || true
+                rm -rf twres/languages/zh_TW* || true
+                
+                find . | cpio -o -H newc > ../ramdisk.cpio
+                cd ..
+                
+                ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
+                mv new-recovery.img recovery_unsigned.img
+                
+                echo "=== 重新签名 ==="
+                $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
+                   --image recovery_unsigned.img \
+                   --partition_size 67633152 \
+                   --partition_name recovery \
+                   --algorithm SHA256_RSA2048 \
+                   --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
+                   
+                mv recovery_unsigned.img recovery.img
+                echo "=== 瘦身完成，最终体积 ==="
+                ls -lh recovery.img
+             else
+                echo "=== 解包失败，找不到 ramdisk.cpio ==="
+                exit 1
+             fi
+          else
+             echo "=== 编译没有生成 recovery.img，请检查上面的编译日志！ ==="
+             exit 1
           fi
 
       - name: Package to Odin Tar
