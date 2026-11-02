@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
@@ -90,7 +90,6 @@ jobs:
           sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
           
-          # 官方内核 + DTBO + AVB
           echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
@@ -103,7 +102,6 @@ jobs:
           echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
           
-          # 只保留中英，砍掉繁中
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := en_US zh_CN' >> device/samsung/d1x/BoardConfig.mk
@@ -124,8 +122,8 @@ jobs:
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
           
-          # 加上 || true，这样即使最后因为体积超限报错，也不会中断，会把文件留在 out 目录里
-          mka recoveryimage -j$(nproc) || true
+          # 关键修改：将 -j$(nproc) 改为 -j2，大幅降低内存消耗
+          mka recoveryimage -j2 || true
 
       - name: Force Shrink Ramdisk using MagiskBoot
         run: |
