@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - OOM Fix
+name: Build OrangeFox 16.0 (d1x) - CN TW Only
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -28,7 +28,6 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      # 云端必须加 Swap，极其关键！
       - name: Setup Swap
         uses: pierotofy/set-swap-space@master
         with:
@@ -96,6 +95,7 @@ jobs:
           sed -i '/OF_USE_LZMA_COMPRESSION/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/LZMA_RAMDISK_TARGETS/d' device/samsung/d1x/BoardConfig.mk
           
+          # 官方内核 + DTBO + AVB
           echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
@@ -108,9 +108,10 @@ jobs:
           echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
           
+          # 只保留简中和繁中
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := en_US zh_CN' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
@@ -124,10 +125,6 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           export FOX_BUILD_DEVICE=d1x
-          
-          # ==========================================
-          # 🌟 防爆内存终极参数！必须加！
-          # ==========================================
           export GOGC=20
           export _JAVA_OPTIONS="-Xmx8G -XX:+UseG1GC"
           
@@ -142,7 +139,7 @@ jobs:
           cd $OUT_DIR
           
           if [ -f "recovery.img" ]; then
-             echo "=== 找到 recovery.img，开始下载 MagiskBoot 强行瘦身 ==="
+             echo "=== 开始下载 MagiskBoot 强行瘦身 ==="
              wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
              unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
              chmod +x lib/x86_64/libmagiskboot.so
@@ -153,13 +150,23 @@ jobs:
                 mkdir -p rd_root && cd rd_root
                 cpio -idmv < ../ramdisk.cpio
                 
-                echo "=== 暴力删除多余图片和繁中 ==="
+                echo "=== 🔥 精准瘦身，保留字体，只删英文和图片 ==="
+                # 1. 删除所有不需要的图片分辨率，只留 xxhdpi
                 rm -rf twres/images/land || true
                 rm -rf twres/images/mdpi || true
                 rm -rf twres/images/hdpi || true
                 rm -rf twres/images/xhdpi || true
                 rm -rf twres/images/xxxhdpi || true
-                rm -rf twres/languages/zh_TW* || true
+                
+                # 2. 删除英文语言包，严格保留 zh_CN 和 zh_TW
+                rm -rf twres/languages/en* || true
+                
+                # 3. 删除极度占空间的无关二进制文件 (不动字体 twres/fonts)
+                rm -rf system/bin/python3* || true
+                rm -rf system/lib64/libpython* || true
+                rm -rf system/bin/bash || true
+                rm -rf system/bin/nano || true
+                rm -rf system/bin/vim || true
                 
                 find . | cpio -o -H newc > ../ramdisk.cpio
                 cd ..
@@ -183,7 +190,7 @@ jobs:
                 exit 1
              fi
           else
-             echo "=== 编译没有生成 recovery.img，请检查上面的编译日志！ ==="
+             echo "=== 编译没有生成 recovery.img ==="
              exit 1
           fi
 
