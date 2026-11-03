@@ -1,4 +1,4 @@
-name: 构建 OrangeFox 16.0 (d1x) -原版极限精简版
+name: 构建 OrangeFox 16.0 (d1x) -原版精简版
 run-name: Build 16.0 Extreme by ${{ github.actor }}
 
 on:
