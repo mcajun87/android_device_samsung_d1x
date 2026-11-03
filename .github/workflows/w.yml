@@ -1,4 +1,4 @@
-name: 构建 OrangeFox 16.0 (d1x) - 47MB 字体精简+系统剥离版
+name: 构建 OrangeFox 16.0 (d1x) - 47MB 字体子集修复版
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -33,7 +33,7 @@ jobs:
         with:
           swap-size-gb: 16
 
-      - name: Install Dependencies (安装字体子集化工具及 Strip 工具)
+      - name: Install Dependencies (包含 Strip 和字体工具)
         run: |
           sudo apt-get update
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
@@ -41,8 +41,6 @@ jobs:
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
             python3 python-is-python3 python3-pip openjdk-17-jdk repo ccache lz4 lzma cpio xz-utils \
             binutils-aarch64-linux-gnu
-          
-          # 安装字体操作库
           pip3 install fonttools
 
       - name: Init and Sync Repo
@@ -143,7 +141,7 @@ jobs:
           lunch twrp_d1x-bp2a-eng
           mka recoveryimage -j2 || true
 
-      - name: Pack, Compress and Sign (字体子集化 + 剥离 + XZ)
+      - name: Pack, Compress and Sign
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
@@ -152,7 +150,7 @@ jobs:
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
           
-          $HOME/fox/out/host/linux-x86/bin/avbtool erase_footer --image recovery.img
+          # 🚨 修复1：移除破坏头部结构的 erase_footer 命令
           ./lib/x86_64/libmagiskboot.so unpack recovery.img
           
           RAMDISK_SRC=""
@@ -168,7 +166,7 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 🔪 只切多余语言和时区 ==="
+          echo "=== 🔪 精准清理语言和时区 ==="
           if [ -d "twres/languages" ]; then
               find twres/languages -type f ! -name 'zh_CN*' -delete || true
           fi
@@ -177,12 +175,10 @@ jobs:
           fi
           rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano
 
-          echo "=== 🪄 对中文字体进行“子集化”手术（保留常用字和标点） ==="
+          echo "=== 🪄 字体子集化（保留常用中文字形） ==="
           if [ -d "twres/fonts" ]; then
               for font in twres/fonts/*.ttf twres/fonts/*.ttc; do
                   if [ -f "$font" ]; then
-                      echo "正在精简字体: $font"
-                      # 提取常用汉字(U+4E00-9FFF)、全角标点(U+3000-303F)以及基础英文/数字
                       pyftsubset "$font" \
                         --unicodes="U+0020-007E,U+4E00-9FFF,U+3000-303F,U+FF00-FFEF" \
                         --output-file="${font}.sub" || true
@@ -193,14 +189,15 @@ jobs:
               done
           fi
 
-          echo "=== ✨ 降维打击！给底层二进制库瘦身（Strip） ==="
+          echo "=== ✨ Strip 剥离系统库调试符号 ==="
           export STRIP=aarch64-linux-gnu-strip
           find . -type f \( -name "*.so" -o -path "./system/bin/*" -o -path "./sbin/*" \) -exec $STRIP --strip-unneeded {} \; 2>/dev/null || true
           
-          echo "=== 🗜️ 使用 XZ 极限压缩 ==="
-          find . | cpio -o -H newc 2>/dev/null | xz -9 -e > ../ramdisk.cpio.xz
+          echo "=== 🗜️ 使用 LZMA 压缩打包 ==="
+          # 🚨 修复2：彻底换回 lzma -9，移除 xz 避免格式不被识别
+          find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
           cd ..
-          rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.lzma 2>/dev/null || true
+          rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.xz 2>/dev/null || true
           
           ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img > /dev/null 2>&1
           mv new-recovery.img recovery_unsigned.img
