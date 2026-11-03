@@ -52,9 +52,10 @@ jobs:
           cd ~/fox
           mkdir -p device/samsung
           
-          # 🚨 注意：请将下面这行的 你的用户名 替换掉！
-          git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/Rocky7842_android_device_samsung_d1x.git device/samsung/d1x
+          # 🚨 动态拉取你当前仓库、当前分支的代码
+          git clone -b ${{ github.ref_name }} --depth=1 https://github.com/${{ github.repository }}.git device/samsung/d1x
           
+          # 拉取公共设备树（固定原版）
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
           find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
@@ -96,7 +97,7 @@ jobs:
           sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
           
-          # 核心配置：指向你上传的 20M 小内核和 1M dtbo
+          # 核心配置：指向你上传的 37.2M 小内核和 1M dtbo
           echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
@@ -181,7 +182,6 @@ jobs:
           esac
           
           echo "=== 保留完整 UI 和多语言，只切 xxxhdpi ==="
-          # 既然内核变小了，这里只保留正常清理即可，不再暴力删图
           if [ -d "twres/languages" ]; then
               find twres/languages -type f ! -name 'en*' ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
           fi
@@ -207,7 +207,7 @@ jobs:
           echo "=================================================="
           
           if [ "$UNSIGNED_SIZE" -ge "$MAX_SAFE_SIZE" ]; then
-             echo "❌ 错误：体积依然超标！这不可能，请检查 prebuilt/Image 是不是还是那个 46MB 的。"
+             echo "❌ 错误：体积依然超标！请检查 prebuilt/Image 是不是没有替换成功。"
              exit 1
           fi
           
