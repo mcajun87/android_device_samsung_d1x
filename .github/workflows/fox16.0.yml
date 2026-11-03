@@ -1,5 +1,5 @@
-name: Build OrangeFox 16.0 (d1x) - [GZIP 标准压缩版]
-run-name: Build GZIP by ${{ github.actor }}
+name: 构建 OrangeFox 16.0 (d1x) - 47MB 换小字体版
+run-name: Build d1x by ${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -106,7 +106,7 @@ jobs:
           
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := zh_CN zh_TW en' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'TW_INCLUDE_CRYPTO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_INCLUDE_FBE_METADATA_DECRYPT := true' >> device/samsung/d1x/BoardConfig.mk
@@ -123,8 +123,8 @@ jobs:
           
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_REMOVE_BASH=1' >> device/samsung/d1x/vendorsetup.sh
-          
-          # GZIP 不需要特别的 BoardConfig 变量，打包时处理
+          echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
+          echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
           
           sed -i '/add_lunch_combo/d' device/samsung/d1x/vendorsetup.sh
 
@@ -139,13 +139,16 @@ jobs:
           lunch twrp_d1x-bp2a-eng
           mka recoveryimage -j2 || true
 
-      - name: Pack, Compress and Sign (GZIP)
+      - name: Pack, Compress and Sign (换小字体 + XZ)
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
+          
           wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
+          
+          $HOME/fox/out/host/linux-x86/bin/avbtool erase_footer --image recovery.img
           ./lib/x86_64/libmagiskboot.so unpack recovery.img
           
           RAMDISK_SRC=""
@@ -161,22 +164,27 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 精准清理（保留 UI 和中文） ==="
+          echo "=== 🔪 只切多余语言和时区 ==="
           if [ -d "twres/languages" ]; then
-              find twres/languages -type f ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
+              find twres/languages -type f ! -name 'zh_CN*' -delete || true
           fi
           if [ -d "system/usr/share/zoneinfo" ]; then
-              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" ! -name "UTC" -delete || true
+              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" -delete || true
           fi
-          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano 2>/dev/null || true
-          if [ -d "twres/images" ]; then
-              rm -rf twres/images/xxxhdpi twres/images/hdpi twres/images/mdpi 2>/dev/null || true
+          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano
+
+          echo "=== 🪄 替换 5MB 中文字体为 1.2MB 像素字体 ==="
+          mkdir -p twres/fonts
+          wget -q "https://raw.githubusercontent.com/SolidZORO/zpix-pixel-font/master/dist/Zpix.ttf" -O twres/fonts/Zpix.ttf
+          if [ -f twres/fonts/Zpix.ttf" ]; then
+              echo "✅ 微型中文字体替换成功！"
+              rm -f twres/fonts/wqy-microhei.ttf
           fi
           
-          echo "=== 使用 GZIP 极限压缩 ==="
-          find . | cpio -o -H newc 2>/dev/null | gzip -9 > ../ramdisk.cpio.gz
+          echo "=== 🗜️ 使用 XZ 极限压缩 ==="
+          find . | cpio -o -H newc 2>/dev/null | xz -9 -e > ../ramdisk.cpio.xz
           cd ..
-          rm -f ramdisk.cpio ramdisk.cpio.lzma ramdisk.cpio.xz 2>/dev/null || true
+          rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.lzma 2>/dev/null || true
           
           ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img > /dev/null 2>&1
           mv new-recovery.img recovery_unsigned.img
@@ -191,14 +199,16 @@ jobs:
           echo "=================================================="
           
           if [ "$UNSIGNED_SIZE" -ge "$MAX_SAFE_SIZE" ]; then
-             echo "❌ GZIP 压缩体积超标！请换回 LZMA 或进一步精简。"
+             echo "❌ 错误：体积依然超标！"
              exit 1
           fi
           
           echo "✅ 体积达标，开始 AVB 签名..."
           $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
-             --image recovery_unsigned.img --partition_size $PARTITION_SIZE \
-             --partition_name recovery --algorithm SHA256_RSA2048 \
+             --image recovery_unsigned.img \
+             --partition_size $PARTITION_SIZE \
+             --partition_name recovery \
+             --algorithm SHA256_RSA2048 \
              --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
              
           mv recovery_unsigned.img recovery.img
@@ -208,15 +218,30 @@ jobs:
       - name: Package to Odin Tar
         run: |
           cd ~/fox/out/target/product/d1x
-          tar -cf recovery.tar recovery.img && md5sum recovery.tar > recovery.tar.md5
+          if [ -f recovery.img ]; then
+            tar -cf recovery.tar recovery.img
+            md5sum recovery.tar > recovery.tar.md5
+          else
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-d1x-Recovery-47MB
+          path: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
 
       - name: Publish Release
         if: github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: OrangeFox-GZIP-d1x-${{ github.run_id }}
-          tag_name: GZIP-${{ github.run_id }}
+          name: OrangeFox-47MB-d1x-${{ github.run_id }}
+          tag_name: 47MB-${{ github.run_id }}
           files: |
+            ~/fox/out/target/product/d1x/recovery.img
             ~/fox/out/target/product/d1x/recovery.tar
             ~/fox/out/target/product/d1x/recovery.tar.md5
         env:
