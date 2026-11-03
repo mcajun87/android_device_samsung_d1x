@@ -52,7 +52,7 @@ jobs:
           cd ~/fox
           mkdir -p device/samsung
           
-          # 🚨 动态拉取当前分支代码（也就是 fox_16.0_f）
+          # 动态拉取当前分支代码（也就是 fox_16.0_f）
           git clone -b ${{ github.ref_name }} --depth=1 https://github.com/${{ github.repository }}.git device/samsung/d1x
           
           # 拉取 16.0 公共设备树
@@ -181,25 +181,33 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 精准清理：保留全部字体与中文时区 ==="
+          echo "=== 终极瘦身：保中文，去英文，砍大件 ==="
           
-          # 1. 语言只保留：英文、简中、繁中
+          # 1. 语言包清理：只保留简体中文和繁体中文，把英文(en)和其他所有语言全删了！
           if [ -d "twres/languages" ]; then
-              find twres/languages -type f ! -name 'en*' ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
+              find twres/languages -type f ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
           fi
           
-          # 2. 时区精准清理：只保留上海（中国标准时间）和 UTC，其余全部删除 (挤出宝贵空间)
+          # 2. 时区精准清理：只保留上海
           if [ -d "system/usr/share/zoneinfo" ]; then
-              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" ! -name "UTC" ! -name "zone.tab" -delete || true
+              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" -delete || true
           fi
           
-          # 3. 图片清理：只删掉没用的 xxxhdpi
+          # 3. 🔥 动英文：删掉纯英文字体（中文字库里自带英文字母，完美显示）
+          if [ -d "twres/fonts" ]; then
+              rm -f twres/fonts/Roboto* twres/fonts/DroidSansMono* 2>/dev/null || true
+          fi
+          
+          # 4. 🔥 揪出并干掉 Ramdisk 里的“体积大户”二进制文件
+          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/e2fsdroid 2>/dev/null || true
+          rm -f system/bin/curl system/bin/7za 2>/dev/null || true
+          
+          # 5. 图片极简清理：把所有大于 30KB 的图片全干掉（只留小图标，背景变纯色）
           if [ -d "twres/images" ]; then
-              rm -rf twres/images/xxxhdpi 2>/dev/null || true
+              rm -rf twres/images/xxxhdpi twres/images/hdpi 2>/dev/null || true
+              find twres/images -name "*.jpg" -delete 2>/dev/null || true
+              find twres/images -name "*.png" -size +30k -delete 2>/dev/null || true
           fi
-          
-          # 4. 二进制清理：删掉刷机根本用不到的大工具
-          rm -f sbin/gnutar sbin/gnused sbin/gnudate sbin/7za 2>/dev/null || true
           
           echo "=== LZMA 极限压缩打包 ==="
           find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
