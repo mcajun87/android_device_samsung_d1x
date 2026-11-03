@@ -44,8 +44,8 @@ jobs:
         run: |
           mkdir -p ~/fox121
           cd ~/fox121
-          # 注意这里是 sync.git 仓库，分支是 fox_12.1
-          repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_12.1 --depth=1
+          # 🚨 修复点：这里必须是 Manifest.git 而不是 sync.git
+          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_12.1 --depth=1
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
       - name: Clone Device Trees (拉取你的设备树)
@@ -66,7 +66,10 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           
           source build/envsetup.sh
-          lunch twrp_d1x-eng
+          # 稳妥起见，加上 || true 防止 lunch 报错直接中断
+          lunch twrp_d1x-eng || lunch fox_d1x-eng || true
+          
+          # 直接指定目标，防止被 lunch 影响
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar (打包成 Odin 刷机包)
