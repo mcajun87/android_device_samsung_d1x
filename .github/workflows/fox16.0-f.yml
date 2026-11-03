@@ -1,4 +1,4 @@
-name:构建 OrangeFox 16.0 (d1x)fox_16.0_f精简版
+name: 构建 OrangeFox 16.0 (d1x)fox_16.0_f精简版
 run-name: Build d1x by ${{ github.actor }}
 
 on:
