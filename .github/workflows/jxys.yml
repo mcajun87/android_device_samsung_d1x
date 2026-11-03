@@ -1,5 +1,5 @@
-name: Build OrangeFox 16.0 (d1x) - [LZMA 极限压缩版]
-run-name: Build LZMA by ${{ github.actor }}
+name: 构建 OrangeFox 16.0 (d1x) - 47MB 终极求生版
+run-name: Build d1x by ${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -36,10 +36,12 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
+          # 包含 strip 工具，专门用来给文件瘦身
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio xz-utils
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio xz-utils \
+            binutils-aarch64-linux-gnu
 
       - name: Init and Sync Repo
         run: |
@@ -51,6 +53,7 @@ jobs:
         run: |
           cd ~/fox
           mkdir -p device/samsung
+          
           git clone -b ${{ github.ref_name }} --depth=1 https://github.com/${{ github.repository }}.git device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
@@ -64,6 +67,7 @@ jobs:
       - name: Force Fix Makefiles
         run: |
           cd ~/fox
+          
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
@@ -104,9 +108,10 @@ jobs:
           echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
           
+          # 语言：只有简中，没有英文和繁中语言包
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := zh_CN zh_TW en' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'TW_INCLUDE_CRYPTO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_INCLUDE_FBE_METADATA_DECRYPT := true' >> device/samsung/d1x/BoardConfig.mk
@@ -123,7 +128,6 @@ jobs:
           
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_REMOVE_BASH=1' >> device/samsung/d1x/vendorsetup.sh
-          
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
           
@@ -135,18 +139,24 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           export FOX_BUILD_DEVICE=d1x
+          export GOGC=20
           export _JAVA_OPTIONS="-Xmx8G -XX:+UseG1GC"
+          
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
           mka recoveryimage -j2 || true
 
-      - name: Pack, Compress and Sign (LZMA)
+      - name: Pack, Compress and Sign (保留字体终极版)
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
+          
           wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
+          
+          # 抹除旧签名
+          $HOME/fox/out/host/linux-x86/bin/avbtool erase_footer --image recovery.img
           ./lib/x86_64/libmagiskboot.so unpack recovery.img
           
           RAMDISK_SRC=""
@@ -162,22 +172,28 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 精准清理（保留 UI 和中文） ==="
+          echo "=== 🔪 第一步：只切多余语言和时区（不碰字体和背景） ==="
+          # 1. 语言包只留简中，干掉繁体、英文等一切杂碎
           if [ -d "twres/languages" ]; then
-              find twres/languages -type f ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
+              find twres/languages -type f ! -name 'zh_CN*' -delete || true
           fi
+          # 2. 时区只留上海
           if [ -d "system/usr/share/zoneinfo" ]; then
-              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" ! -name "UTC" -delete || true
+              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" -delete || true
           fi
-          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano 2>/dev/null || true
-          if [ -d "twres/images" ]; then
-              rm -rf twres/images/xxxhdpi twres/images/hdpi twres/images/mdpi 2>/dev/null || true
-          fi
+          # 3. 删掉没用的工具
+          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano
+
+          echo "=== ✨ 第二步：降维打击！给底层二进制库瘦身（Strip） ==="
+          # 这一步是救命关键！去掉系统 .so 库和 bin 文件里的调试符号，能大幅减少体积
+          export STRIP=aarch64-linux-gnu-strip
+          find . -type f \( -name "*.so" -o -path "./system/bin/*" -o -path "./sbin/*" \) -exec $STRIP --strip-unneeded {} \; 2>/dev/null || true
           
-          echo "=== 使用 LZMA 极限压缩 (-9 -e) ==="
-          find . | cpio -o -H newc 2>/dev/null | lzma -9 -e > ../ramdisk.cpio.lzma
+          echo "=== 🗜️ 第三步：使用 XZ 压缩打包 ==="
+          # 改用 xz -9 -e，压缩率最高且不会报错
+          find . | cpio -o -H newc 2>/dev/null | xz -9 -e > ../ramdisk.cpio.xz
           cd ..
-          rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.xz 2>/dev/null || true
+          rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.lzma 2>/dev/null || true
           
           ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img > /dev/null 2>&1
           mv new-recovery.img recovery_unsigned.img
@@ -192,14 +208,16 @@ jobs:
           echo "=================================================="
           
           if [ "$UNSIGNED_SIZE" -ge "$MAX_SAFE_SIZE" ]; then
-             echo "❌ LZMA 压缩依然超标！"
+             echo "❌ 错误：47MB 内核下，即便保留了 5MB 的中文字体并做了极限 Strip，依然超标！"
              exit 1
           fi
           
           echo "✅ 体积达标，开始 AVB 签名..."
           $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
-             --image recovery_unsigned.img --partition_size $PARTITION_SIZE \
-             --partition_name recovery --algorithm SHA256_RSA2048 \
+             --image recovery_unsigned.img \
+             --partition_size $PARTITION_SIZE \
+             --partition_name recovery \
+             --algorithm SHA256_RSA2048 \
              --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
              
           mv recovery_unsigned.img recovery.img
@@ -209,15 +227,30 @@ jobs:
       - name: Package to Odin Tar
         run: |
           cd ~/fox/out/target/product/d1x
-          tar -cf recovery.tar recovery.img && md5sum recovery.tar > recovery.tar.md5
+          if [ -f recovery.img ]; then
+            tar -cf recovery.tar recovery.img
+            md5sum recovery.tar > recovery.tar.md5
+          else
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-d1x-Recovery-47MB
+          path: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
 
       - name: Publish Release
         if: github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: OrangeFox-LZMA-d1x-${{ github.run_id }}
-          tag_name: LZMA-${{ github.run_id }}
+          name: OrangeFox-47MB-d1x-${{ github.run_id }}
+          tag_name: 47MB-${{ github.run_id }}
           files: |
+            ~/fox/out/target/product/d1x/recovery.img
             ~/fox/out/target/product/d1x/recovery.tar
             ~/fox/out/target/product/d1x/recovery.tar.md5
         env:
