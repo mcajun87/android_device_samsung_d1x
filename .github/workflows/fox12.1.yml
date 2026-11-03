@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free Disk Space (腾出最大可用空间)
+      - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: true
@@ -29,15 +29,16 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Install Dependencies (安装编译依赖，注意 JDK 11)
+      - name: Install Dependencies
         run: |
           sudo apt-get update
+          # 🚨 补充了 aria2, xmlstarlet 等 orangefox_sync.sh 可能依赖的工具
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-            python3 python-is-python3 openjdk-11-jdk ccache aria2
+            python3 python-is-python3 openjdk-11-jdk ccache aria2 xmlstarlet repo
 
-      - name: Set up ccache (开启编译缓存)
+      - name: Set up ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
@@ -45,22 +46,30 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-fox121-
 
-      - name: Init and Sync Repo (通过官方脚本同步 fox_12.1 源码)
+      - name: Init and Sync Repo (通过官方脚本同步)
         run: |
           mkdir -p ~/OrangeFox_sync
           cd ~/OrangeFox_sync
           git clone https://gitlab.com/OrangeFox/sync.git
           cd sync
+          
+          # 🚨 核心修复：赋予脚本执行权限
+          chmod +x orangefox_sync.sh
+          chmod +x update_fox.sh || true
+          
+          # 按照官方文档严格传参：分支是 12.1，不要加 fox_ 前缀
           ./orangefox_sync.sh --branch 12.1 --path ~/fox_12.1
 
-      - name: Clone Device Trees (拉取你的设备树)
+      - name: Clone Device Trees
         run: |
           cd ~/fox_12.1
           mkdir -p device/samsung
+          # 将当前工作流的代码复制进去
           cp -r $GITHUB_WORKSPACE device/samsung/d1x
+          # 拉取 12.1 的公共树
           git clone -b fox_12.1 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
 
-      - name: Build Recovery (开始编译)
+      - name: Build Recovery
         run: |
           cd ~/fox_12.1
           export ALLOW_MISSING_DEPENDENCIES=true
@@ -69,22 +78,22 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           
           source build/envsetup.sh
+          # 兼容橙狐旧版的 lunch 命名
           lunch twrp_d1x-eng || lunch fox_d1x-eng || true
+          
           mka recoveryimage -j$(nproc)
 
-      - name: Package to Odin Tar (打包成 Odin 刷机包)
+      - name: Package to Odin Tar
         run: |
           cd ~/fox_12.1/out/target/product/d1x
           if [ -f recovery.img ]; then
-            echo "编译成功，正在打包为 Odin tar..."
             tar -cf recovery.tar recovery.img
             md5sum recovery.tar > recovery.tar.md5
           else
-            echo "未找到 recovery.img，编译可能失败。"
             exit 1
           fi
 
-      - name: Upload Artifact (上传到 Actions 临时产物)
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: OrangeFox-R12.1-d1x-Recovery
@@ -94,7 +103,7 @@ jobs:
             ~/fox_12.1/out/target/product/d1x/recovery.tar.md5
           if-no-files-found: error
 
-      - name: Publish Release (发布到 Release)
+      - name: Publish Release
         if: github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
