@@ -1,4 +1,4 @@
-name: Build OrangeFox R12.1 (d1x)
+name: 构建 OrangeFox R12.1 (d1x)
 run-name: Build R12.1 by ${{ github.actor }}
 
 on:
