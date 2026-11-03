@@ -3,6 +3,12 @@ run-name: Build R12.1 by ${{ github.actor }}
 
 on:
   workflow_dispatch: # 允许手动点击运行
+    inputs:
+      publish_release:
+        description: '是否发布到 Release？'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -44,7 +50,7 @@ jobs:
         run: |
           mkdir -p ~/fox121
           cd ~/fox121
-          # 🚨 修复点：这里必须是 Manifest.git 而不是 sync.git
+          # 🚨 修复点：必须用 Manifest.git
           repo init -u https://gitlab.com/OrangeFox/Manifest.git -b fox_12.1 --depth=1
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
@@ -66,10 +72,10 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           
           source build/envsetup.sh
-          # 稳妥起见，加上 || true 防止 lunch 报错直接中断
+          # 兼容 12.1 的 lunch 命名
           lunch twrp_d1x-eng || lunch fox_d1x-eng || true
           
-          # 直接指定目标，防止被 lunch 影响
+          # 开始编译
           mka recoveryimage -j$(nproc)
 
       - name: Package to Odin Tar (打包成 Odin 刷机包)
@@ -85,7 +91,7 @@ jobs:
             exit 1
           fi
 
-      - name: Upload Artifact (上传产物)
+      - name: Upload Artifact (上传到 Actions 临时产物)
         uses: actions/upload-artifact@v4
         with:
           name: OrangeFox-R12.1-d1x-Recovery
@@ -94,3 +100,16 @@ jobs:
             ~/fox121/out/target/product/d1x/recovery.tar
             ~/fox121/out/target/product/d1x/recovery.tar.md5
           if-no-files-found: error
+
+      - name: Publish Release (发布到 Release)
+        if: github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OrangeFox-R12.1-d1x-${{ github.run_id }}
+          tag_name: R12.1-${{ github.run_id }}
+          files: |
+            ~/fox121/out/target/product/d1x/recovery.img
+            ~/fox121/out/target/product/d1x/recovery.tar
+            ~/fox121/out/target/product/d1x/recovery.tar.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
