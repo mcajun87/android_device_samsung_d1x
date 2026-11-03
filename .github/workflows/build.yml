@@ -1,4 +1,4 @@
-name: 构建 OrangeFox 16.0 (原版内核极限版)
+name: 构建 OrangeFox 16.0 (d1x) -原版极限精简版
 run-name: Build 16.0 Extreme by ${{ github.actor }}
 
 on:
@@ -51,9 +51,15 @@ jobs:
         run: |
           cd ~/fox
           mkdir -p device/samsung
-          # 动态拉取当前分支
+          
+          # 动态拉取当前分支代码（也就是 fox_16.0）
           git clone -b ${{ github.ref_name }} --depth=1 https://github.com/${{ github.repository }}.git device/samsung/d1x
+          
+          # 拉取 16.0 公共设备树
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
+          
+          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
+          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
           
           rm -rf external/foxcli
           sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
@@ -91,11 +97,13 @@ jobs:
           sed -i '/TW_EXTRA_LANGUAGES/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/TW_DEFAULT_LANGUAGE/d' device/samsung/d1x/BoardConfig.mk
           
+          # 指向原版 47MB 内核和 dtbo.img
           echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_MKBOOTIMG_ARGS := --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 --header_version 1' >> device/samsung/d1x/BoardConfig.mk
           
+          # AVB 签名配置
           echo 'BOARD_AVB_ENABLE := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_KEY_PATH := external/avb/test/data/testkey_rsa2048.pem' >> device/samsung/d1x/BoardConfig.mk
@@ -103,20 +111,26 @@ jobs:
           echo 'BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA2048' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 0' >> device/samsung/d1x/BoardConfig.mk
           
-          echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
+          # 编译期仅保留简体中文
+          echo 'TW_EXTRA_LANGUAGES := false' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := zh_CN zh_TW en' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           
+          # FBE 解密与性能
           echo 'TW_INCLUDE_CRYPTO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_INCLUDE_FBE_METADATA_DECRYPT := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_USE_PERFORMANCE_GOVERNOR := true' >> device/samsung/d1x/BoardConfig.mk
           
+          # 剔除无用组件
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TWRP_INCLUDE_LOGCAT := false' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_INCLUDE_NTFS_3G := false' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_INCLUDE_FB2PNG := false' >> device/samsung/d1x/BoardConfig.mk
+          
+          # U 盘外接支持
+          echo 'TW_INCLUDE_FUSE_EXFAT := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_INCLUDE_FUSE_NTFS := true' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_INCLUDE_NTFS_3G := true' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'export FOX_DRASTIC_SIZE_REDUCTION=1' >> device/samsung/d1x/vendorsetup.sh
           echo 'export FOX_REMOVE_BASH=1' >> device/samsung/d1x/vendorsetup.sh
@@ -131,19 +145,27 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           export FOX_BUILD_DEVICE=d1x
+          export GOGC=20
           export _JAVA_OPTIONS="-Xmx8G -XX:+UseG1GC"
+          
           source build/envsetup.sh
           lunch twrp_d1x-bp2a-eng
           mka recoveryimage -j2 || true
 
-      - name: Pack, Compress and Sign (极限瘦身版)
+      - name: Pack, Compress and Sign (原版内核极限瘦身版)
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
           
+          if [ ! -f "recovery.img" ]; then
+             echo "=== 编译没有生成 recovery.img ==="
+             exit 1
+          fi
+          
           wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
+          
           ./lib/x86_64/libmagiskboot.so unpack recovery.img
           
           RAMDISK_SRC=""
@@ -159,28 +181,32 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 原版内核专属：极限瘦身模式 ==="
-          # 1. 语言只留中文、繁中、英文
-          find twres/languages -type f ! -name 'en*' ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
+          echo "=== 🔥 原版47MB专属：保高清、保中文、背景保留，极限瘦身 ==="
           
-          # 2. 极端图片清理：直接砍掉高分辨率，且超过 50KB 的图片全删（只留基本的UI素材）
-          if [ -d "twres/images" ]; then
-              rm -rf twres/images/xxxhdpi twres/images/xxhdpi 2>/dev/null || true
-              find twres/images -type f \( -name "*.png" -o -name "*.jpg" \) -size +50k -delete || true
+          # 1. 语言包清理：只留简体中文
+          if [ -d "twres/languages" ]; then
+              find twres/languages -type f ! -name 'zh_CN*' -delete || true
           fi
           
-          # 3. 字体只保留最基础的英文字体（省出大量空间，绝对不会乱码，会调用底层字库）
-          if [ -d "twres/fonts" ]; then
-              find twres/fonts -type f ! -name "Roboto-Regular.ttf" -delete || true
-          fi
-          
-          # 4. 时区只留上海和UTC
+          # 2. 时区清理：只留上海和 UTC
           if [ -d "system/usr/share/zoneinfo" ]; then
               find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" ! -name "UTC" -delete || true
           fi
           
-          # 5. 清理无用二进制
-          rm -f sbin/foxcli sbin/gnutar sbin/gnused sbin/gnudate sbin/magiskboot sbin/curl sbin/hexpatch 2>/dev/null || true
+          # 3. UI 图片精准打击：保留 1080P (xxhdpi) 和开机背景，砍掉超大图和低清图
+          if [ -d "twres/images" ]; then
+              # 删掉 2K/4K 用的 xxxhdpi，以及老旧手机用的 hdpi/mdpi
+              rm -rf twres/images/xxxhdpi twres/images/hdpi twres/images/mdpi 2>/dev/null || true
+              # 为防止开机背景图被误删，不对图片大小做限制删减，只做分辨率层级删减
+          fi
+          
+          # 4. 字体清理：保留中文字体，清理纯英文字体（系统会自动用中文库渲染英文，不会乱码）
+          if [ -d "twres/fonts" ]; then
+              rm -f twres/fonts/Roboto* 2>/dev/null || true
+          fi
+          
+          # 5. 二进制大件清理：干掉动辄几兆的无用工具
+          rm -f sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano sbin/magiskboot sbin/magiskpolicy 2>/dev/null || true
           
           echo "=== LZMA 极限压缩打包 ==="
           find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
@@ -194,8 +220,13 @@ jobs:
           MAX_SAFE_SIZE=67563520
           UNSIGNED_SIZE=$(stat -c%s "recovery_unsigned.img")
           
+          echo "=================================================="
+          echo "压缩后未签名镜像大小: $UNSIGNED_SIZE 字节"
+          echo "允许的最大安全体积: $MAX_SAFE_SIZE 字节"
+          echo "=================================================="
+          
           if [ "$UNSIGNED_SIZE" -ge "$MAX_SAFE_SIZE" ]; then
-             echo "❌ 即使极限压缩，原版 47MB 内核依然塞不下！"
+             echo "❌ 错误：体积依然超标！原版内核确实太大了，建议换成小内核。"
              exit 1
           fi
           
@@ -208,19 +239,34 @@ jobs:
              --key $HOME/fox/external/avb/test/data/testkey_rsa2048.pem
              
           mv recovery_unsigned.img recovery.img
-          
+          echo "🎉 签名完成，最终生成的 recovery.img 体积:"
+          ls -lh recovery.img
+
       - name: Package to Odin Tar
         run: |
           cd ~/fox/out/target/product/d1x
-          tar -cf recovery.tar recovery.img
-          md5sum recovery.tar > recovery.tar.md5
+          if [ -f recovery.img ]; then
+            tar -cf recovery.tar recovery.img
+            md5sum recovery.tar > recovery.tar.md5
+          else
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-d1x-Recovery
+          path: |
+            ~/fox/out/target/product/d1x/recovery.img
+            ~/fox/out/target/product/d1x/recovery.tar
+            ~/fox/out/target/product/d1x/recovery.tar.md5
 
       - name: Publish Release
         if: github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: OrangeFox-16.0-Extreme-d1x-${{ github.run_id }}
-          tag_name: 16.0-Ex-${{ github.run_id }}
+          name: OrangeFox-d1x-${{ github.run_id }}
+          tag_name: ${{ github.run_id }}
           files: |
             ~/fox/out/target/product/d1x/recovery.img
             ~/fox/out/target/product/d1x/recovery.tar
