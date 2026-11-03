@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - fox16.0-f精简版
+name:构建 OrangeFox 16.0 (d1x)fox_16.0_f精简版
 run-name: Build d1x by ${{ github.actor }}
 
 on:
@@ -152,7 +152,7 @@ jobs:
           lunch twrp_d1x-bp2a-eng
           mka recoveryimage -j2 || true
 
-      - name: Pack, Compress and Sign
+      - name: Pack, Compress and Sign (带精准查杀与验证)
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
@@ -181,36 +181,41 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 终极瘦身：保中文，去英文，砍大件 ==="
+          echo "=== 🕵️‍♂️ 第一步：体检，看看解压后到底是谁占了空间 ==="
+          echo "--- 当前 Ramdisk 最大的 10 个文件 ---"
+          find . -type f -exec du -h {} + | sort -rh | head -n 10
           
-          # 1. 语言包清理：只保留简体中文和繁体中文，把英文(en)和其他所有语言全删了！
+          echo "=== 🔪 第二步：精确手术（清除无用大件，保留高清UI/背景/中文） ==="
+          
+          # 1. 语言：只保留简中、繁中，删掉英文和其他所有语言
           if [ -d "twres/languages" ]; then
               find twres/languages -type f ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
           fi
           
-          # 2. 时区精准清理：只保留上海
+          # 2. 时区：只留上海和UTC
           if [ -d "system/usr/share/zoneinfo" ]; then
-              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" -delete || true
+              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" ! -name "UTC" -delete || true
           fi
           
-          # 3. 🔥 动英文：删掉纯英文字体（中文字库里自带英文字母，完美显示）
-          if [ -d "twres/fonts" ]; then
-              rm -f twres/fonts/Roboto* twres/fonts/DroidSansMono* 2>/dev/null || true
-          fi
+          # 3. 二进制大件绝杀：干掉毫无用处且体积庞大的工具
+          echo "正在清除无用二进制..."
+          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano
+          rm -f system/bin/curl system/bin/7za system/bin/magiskboot
           
-          # 4. 🔥 揪出并干掉 Ramdisk 里的“体积大户”二进制文件
-          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/e2fsdroid 2>/dev/null || true
-          rm -f system/bin/curl system/bin/7za 2>/dev/null || true
-          
-          # 5. 图片极简清理：把所有大于 30KB 的图片全干掉（只留小图标，背景变纯色）
+          # 4. 图片精准降维：保留 Note10 需要的 xxhdpi/xhdpi，干掉超大图和低清图（不删图，只删分辨率目录）
           if [ -d "twres/images" ]; then
-              rm -rf twres/images/xxxhdpi twres/images/hdpi 2>/dev/null || true
-              find twres/images -name "*.jpg" -delete 2>/dev/null || true
-              find twres/images -name "*.png" -size +30k -delete 2>/dev/null || true
+              echo "正在清除多余分辨率图片..."
+              rm -rf twres/images/xxxhdpi twres/images/hdpi twres/images/mdpi
           fi
+          
+          echo "=== ✅ 第三步：复查，确认手术成功 ==="
+          echo "确认 magiskboot 是否还在:"
+          ls -lh sbin/magiskboot 2>/dev/null || echo "✅ magiskboot 已彻底删除"
+          echo "确认 lptools 是否还在:"
+          ls -lh sbin/lptools 2>/dev/null || echo "✅ lptools 已彻底删除"
           
           echo "=== LZMA 极限压缩打包 ==="
-          find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
+          find . | cpio -o -H newc 2>/dev/null | lzma -9 -e > ../ramdisk.cpio.lzma
           cd ..
           rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.xz 2>/dev/null || true
           
