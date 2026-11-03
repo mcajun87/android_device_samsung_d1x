@@ -1,4 +1,4 @@
-name: Build OrangeFox 16.0 (d1x) - CN TW Only
+name: Build OrangeFox 16.0 (d1x) - fox16.0-f精简版
 run-name: Build d1x by ${{ github.actor }}
 
 on:
