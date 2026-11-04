@@ -54,7 +54,6 @@ jobs:
         run: |
           cd ~/fox
           mkdir -p device/samsung
-          # 动态拉取你当前分支的设备树
           git clone -b ${{ github.ref_name }} --depth=1 https://github.com/${{ github.repository }}.git device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
@@ -64,7 +63,6 @@ jobs:
       - name: Force Fix Makefiles
         run: |
           cd ~/fox
-          
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
@@ -81,7 +79,6 @@ jobs:
           echo 'PRODUCT_MODEL := SM-N971N' >> device/samsung/d1x/twrp_d1x.mk
           echo 'PRODUCT_MANUFACTURER := samsung' >> device/samsung/d1x/twrp_d1x.mk
           
-          # 清理之前的配置，写入纯净极限配置
           sed -i '/BOARD_KERNEL_IMAGE_NAME/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BOARD_INCLUDE_RECOVERY_DTBO/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BOARD_PREBUILT_DTBOIMAGE/d' device/samsung/d1x/BoardConfig.mk
@@ -105,7 +102,7 @@ jobs:
           lunch twrp_d1x-bp2a-eng
           mka recoveryimage -j2 || true
 
-      - name: Pack, Compress and Sign (极致压榨版)
+      - name: Pack, Compress and Sign (终极修复版)
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
@@ -114,13 +111,9 @@ jobs:
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
           
-          # 🚨 修复 1：抹除原版底包的 AVB 签名
-          echo "=== 抹除原版 AVB 签名 ==="
-          $HOME/fox/out/host/linux-x86/bin/avbtool erase_footer --image recovery.img || true
-          
-          # 🚨 修复 2：强制忽略验证解包
-          echo "=== 强制解包 ==="
-          ./lib/x86_64/libmagiskboot.so unpack --noverify recovery.img
+          # 🚨 核心修复：使用最标准的解包命令，绝对不加任何无用的 flag
+          echo "=== 开始解包 ==="
+          ./lib/x86_64/libmagiskboot.so unpack recovery.img
           
           RAMDISK_SRC=""
           for f in ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.lzma ramdisk.cpio.xz; do
@@ -147,7 +140,6 @@ jobs:
           cd ..
           rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.xz 2>/dev/null || true
           
-          # 🚨 修复 3：取消错误屏蔽，如果失败立刻报出来
           echo "=== 重新打包 ==="
           ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
           
