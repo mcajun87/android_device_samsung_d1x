@@ -10,6 +10,10 @@ on:
         type: boolean
         default: true
 
+# 👇 核心修复：赋予 Workflow 创建 Release 的写入权限
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
