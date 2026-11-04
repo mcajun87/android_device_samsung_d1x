@@ -1,4 +1,4 @@
-name: 构建 OrangeFox 16.0 f (d1x) - 41MB极限内核无签版
+name: 构建 OrangeFox 16.0-f (d1x) - 41MB极限内核无签版
 run-name: Build d1x by ${{ github.actor }}
 
 on:
