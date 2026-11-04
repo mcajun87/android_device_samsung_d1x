@@ -1,4 +1,4 @@
-name: 构建 OrangeFox fox_16.0_f (d1x) - 纯净无签版
+name: 构建 OrangeFox (d1x) - 纯净无签版
 run-name: Build Unsigned by ${{ github.actor }}
 
 on:
@@ -57,12 +57,8 @@ jobs:
           git clone -b ${{ github.ref_name }} --depth=1 https://github.com/${{ github.repository }}.git device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
           
-          find device/ -maxdepth 1 -mindepth 1 -type d -not -name "samsung" -exec rm -rf {} + || true
-          find device/samsung -maxdepth 1 -mindepth 1 -type d -not -name "d1x" -not -name "exynos9820-common" -exec rm -rf {} + || true
-          
           rm -rf external/foxcli
-          sed -i '/foxcli/d' vendor/twrp/config/common.mk || true
-          sed -i '/foxcli/d' vendor/twrp/config/packages.mk || true
+          sed -i '/foxcli/d' vendor/twrp/config/common.mk vendor/twrp/config/packages.mk || true
 
       - name: Force Fix Makefiles
         run: |
@@ -94,6 +90,7 @@ jobs:
           echo 'BOARD_INCLUDE_RECOVERY_DTBO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_MKBOOTIMG_ARGS := --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 --header_version 1' >> device/samsung/d1x/BoardConfig.mk
+          
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
 
@@ -115,7 +112,11 @@ jobs:
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
           
-          ./lib/x86_64/libmagiskboot.so unpack recovery.img
+          # 抹除签名防止 magiskboot 报错
+          $HOME/fox/out/host/linux-x86/bin/avbtool erase_footer --image recovery.img || true
+          
+          # 强制解包
+          ./lib/x86_64/libmagiskboot.so unpack --noverify recovery.img
           
           RAMDISK_SRC=""
           for f in ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.lzma ramdisk.cpio.xz; do
@@ -130,24 +131,28 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 🚨 A17 空间保卫战：狂砍资源 ==="
-          if [ -d "twres/languages" ]; then
-              find twres/languages -type f ! -name 'zh_CN*' -delete || true
-          fi
-          if [ -d "system/usr/share/zoneinfo" ]; then
-              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" -delete || true
-          fi
+          echo "=== 🚨 极限瘦身（删掉所有累赘） ==="
+          rm -rf twres/languages/* 2>/dev/null || true
+          rm -rf system/usr/share/zoneinfo/* 2>/dev/null || true
           rm -rf twres/fonts/* 2>/dev/null || true
           rm -rf twres/images/* 2>/dev/null || true
           rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano
           
-          echo "=== 标准 LZMA 压缩 ==="
+          echo "=== LZMA 压缩并重新打包 ==="
           find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
           cd ..
           rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.xz 2>/dev/null || true
           
-          ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img > /dev/null 2>&1
+          ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
+          
+          if [ ! -f "new-recovery.img" ]; then
+             echo "❌ 错误：repack 失败！"
+             exit 1
+          fi
+          
           mv new-recovery.img recovery.img
+          echo "🎉 无签纯净打包完成！当前体积:"
+          ls -lh recovery.img
           
           tar -cf recovery.tar recovery.img
           md5sum recovery.tar > recovery.tar.md5
