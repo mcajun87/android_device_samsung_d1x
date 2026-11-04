@@ -1,4 +1,4 @@
-name: 构建 OrangeFox fox_16.0_f (d1x) - 满血解密版
+name: 构建 OrangeFox (d1x) - 满血解密版
 run-name: Build Full by ${{ github.actor }}
 
 on:
@@ -19,16 +19,30 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
+
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
-        with: { tool-cache: true, android: true, dotnet: true, haskell: true, large-packages: true, docker-images: true, swap-storage: true }
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Setup Swap
         uses: pierotofy/set-swap-space@master
-        with: { swap-size-gb: 16 }
+        with:
+          swap-size-gb: 16
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio xz-utils
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 libncurses5 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+            python3 python-is-python3 openjdk-17-jdk repo ccache lz4 lzma cpio xz-utils
 
       - name: Init and Sync Repo
         run: |
@@ -42,11 +56,14 @@ jobs:
           mkdir -p device/samsung
           git clone -b ${{ github.ref_name }} --depth=1 https://github.com/${{ github.repository }}.git device/samsung/d1x
           git clone -b fox_16.0 --depth=1 https://github.com/mcajun87/android_device_samsung_exynos9820-common.git device/samsung/exynos9820-common
-          rm -rf external/foxcli && sed -i '/foxcli/d' vendor/twrp/config/common.mk vendor/twrp/config/packages.mk || true
+          
+          rm -rf external/foxcli
+          sed -i '/foxcli/d' vendor/twrp/config/common.mk vendor/twrp/config/packages.mk || true
 
       - name: Force Fix Makefiles
         run: |
           cd ~/fox
+          
           echo 'PRODUCT_MAKEFILES := \' > device/samsung/d1x/AndroidProducts.mk
           echo '    $(LOCAL_DIR)/twrp_d1x.mk' >> device/samsung/d1x/AndroidProducts.mk
           echo '' >> device/samsung/d1x/AndroidProducts.mk
@@ -81,12 +98,8 @@ jobs:
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TWRP_INCLUDE_LOGCAT := false' >> device/samsung/d1x/BoardConfig.mk
           
-          echo 'TW_INCLUDE_FUSE_EXFAT := true' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_INCLUDE_FUSE_NTFS := true' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_INCLUDE_NTFS_3G := true' >> device/samsung/d1x/BoardConfig.mk
-          
+          # 语言和时区
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_LANGUAGES := zh_CN zh_TW en' >> device/samsung/d1x/BoardConfig.mk
@@ -111,7 +124,10 @@ jobs:
           wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
-          ./lib/x86_64/libmagiskboot.so unpack recovery.img
+          
+          # 抹除底包签名
+          $HOME/fox/out/host/linux-x86/bin/avbtool erase_footer --image recovery.img || true
+          ./lib/x86_64/libmagiskboot.so unpack --noverify recovery.img
           
           RAMDISK_SRC=""
           for f in ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.lzma ramdisk.cpio.xz; do
@@ -126,16 +142,29 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 满血版正常清理（保留所有 UI 中文字体） ==="
+          echo "=== 正常清理（保留中文字体和高清UI） ==="
+          if [ -d "twres/languages" ]; then
+              find twres/languages -type f ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
+          fi
+          if [ -d "system/usr/share/zoneinfo" ]; then
+              find system/usr/share/zoneinfo -type f ! -path "*Asia/Shanghai*" -delete || true
+          fi
           if [ -d "twres/images" ]; then
               rm -rf twres/images/xxxhdpi 2>/dev/null || true
           fi
+          rm -f sbin/magiskboot sbin/magiskpolicy sbin/lptools sbin/curl sbin/7za sbin/gnutar sbin/gnused sbin/gnudate sbin/nano
           
           echo "=== LZMA 压缩并重打包 ==="
           find . | cpio -o -H newc 2>/dev/null | lzma -9 > ../ramdisk.cpio.lzma
           cd ..
           rm -f ramdisk.cpio ramdisk.cpio.gz ramdisk.cpio.xz 2>/dev/null || true
-          ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img > /dev/null 2>&1
+          
+          ./lib/x86_64/libmagiskboot.so repack recovery.img new-recovery.img
+          
+          if [ ! -f "new-recovery.img" ]; then
+             echo "❌ 错误：repack 失败！"
+             exit 1
+          fi
           mv new-recovery.img recovery.img
           
           echo "=== 应用 AVB 签名 (4096) ==="
