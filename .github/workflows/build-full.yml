@@ -1,5 +1,5 @@
-name: 构建 OrangeFox (d1x) - 满血解密版
-run-name: Build Full by ${{ github.actor }}
+name: 构建 OrangeFox (d1x) - 终极满血无签版
+run-name: Build Final by ${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -84,6 +84,7 @@ jobs:
           sed -i '/BOARD_INCLUDE_RECOVERY_DTBO/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BOARD_PREBUILT_DTBOIMAGE/d' device/samsung/d1x/BoardConfig.mk
           sed -i '/BOARD_MKBOOTIMG_ARGS/d' device/samsung/d1x/BoardConfig.mk
+          # 彻底删除所有 AVB 配置
           sed -i '/BOARD_AVB/d' device/samsung/d1x/BoardConfig.mk
           
           echo 'BOARD_KERNEL_IMAGE_NAME := Image' >> device/samsung/d1x/BoardConfig.mk
@@ -91,18 +92,19 @@ jobs:
           echo 'BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img' >> device/samsung/d1x/BoardConfig.mk
           echo 'BOARD_MKBOOTIMG_ARGS := --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --tags_offset 0x00000100 --header_version 1' >> device/samsung/d1x/BoardConfig.mk
           
-          # 满血功能配置
+          # 满血功能，开启解密
           echo 'TW_INCLUDE_CRYPTO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_INCLUDE_FBE_METADATA_DECRYPT := true' >> device/samsung/d1x/BoardConfig.mk
+          
           echo 'TW_USE_PERFORMANCE_GOVERNOR := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TWRPAPP := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_NANO := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_EXCLUDE_TZDATA := true' >> device/samsung/d1x/BoardConfig.mk
           
-          # 语言和时区
+          # 语言：简中、繁中
           echo 'TW_EXTRA_LANGUAGES := true' >> device/samsung/d1x/BoardConfig.mk
           echo 'TW_DEFAULT_LANGUAGE := zh_CN' >> device/samsung/d1x/BoardConfig.mk
-          echo 'TW_LANGUAGES := zh_CN zh_TW en' >> device/samsung/d1x/BoardConfig.mk
+          echo 'TW_LANGUAGES := zh_CN zh_TW' >> device/samsung/d1x/BoardConfig.mk
           
           echo 'OF_USE_LZMA_COMPRESSION := 1' >> device/samsung/d1x/BoardConfig.mk
           echo 'LZMA_RAMDISK_TARGETS := recovery' >> device/samsung/d1x/BoardConfig.mk
@@ -116,7 +118,7 @@ jobs:
           lunch twrp_d1x-bp2a-eng
           mka recoveryimage -j2 || true
 
-      - name: Pack, Compress and Sign (满血有签版)
+      - name: Pack, Compress and Sign (无签满血版)
         run: |
           export OUT_DIR=$HOME/fox/out/target/product/d1x
           cd $OUT_DIR
@@ -125,8 +127,7 @@ jobs:
           unzip -o Magisk-v27.0.apk lib/x86_64/libmagiskboot.so > /dev/null
           chmod +x lib/x86_64/libmagiskboot.so
           
-          # 抹除底包签名
-          $HOME/fox/out/host/linux-x86/bin/avbtool erase_footer --image recovery.img || true
+          # 强制忽略底包签名解包
           ./lib/x86_64/libmagiskboot.so unpack --noverify recovery.img
           
           RAMDISK_SRC=""
@@ -142,7 +143,7 @@ jobs:
               *)      cpio -idmuv < "../$RAMDISK_SRC" 2>/dev/null ;;
           esac
           
-          echo "=== 正常清理（保留中文字体和高清UI） ==="
+          echo "=== 精准清理（保留中文字体和高清UI，绝不超标） ==="
           if [ -d "twres/languages" ]; then
               find twres/languages -type f ! -name 'zh_CN*' ! -name 'zh_TW*' -delete || true
           fi
@@ -167,15 +168,9 @@ jobs:
           fi
           mv new-recovery.img recovery.img
           
-          echo "=== 应用 AVB 签名 (4096) ==="
-          PARTITION_SIZE=67633152
-          $HOME/fox/out/host/linux-x86/bin/avbtool add_hash_footer \
-             --image recovery.img \
-             --partition_size $PARTITION_SIZE \
-             --partition_name recovery \
-             --algorithm SHA256_RSA4096 \
-             --key $HOME/fox/external/avb/test/data/testkey_rsa4096.pem
-             
+          echo "🎉 打包完成！当前体积:"
+          ls -lh recovery.img
+          
           tar -cf recovery.tar recovery.img
           md5sum recovery.tar > recovery.tar.md5
 
@@ -183,8 +178,8 @@ jobs:
         if: github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: OrangeFox-Full-d1x-${{ github.run_id }}
-          tag_name: Full-${{ github.run_id }}
+          name: OrangeFox-Final-d1x-${{ github.run_id }}
+          tag_name: Final-${{ github.run_id }}
           files: |
             ~/fox/out/target/product/d1x/recovery.tar
             ~/fox/out/target/product/d1x/recovery.tar.md5
