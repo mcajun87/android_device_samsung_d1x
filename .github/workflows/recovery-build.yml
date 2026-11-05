@@ -1,0 +1,158 @@
+# 放到你的 OrangeFox 源码树里任意一个 git 仓的 .github/workflows/recovery-build.yml
+# 例：mcajun87/android_device_samsung_d1x 的 fox_16.0 分支
+#
+# 发布开关：Run workflow 面板里的「发布到 Releases」勾选框（type: boolean）
+#   不勾 = 只编译 + 校验 + 上传 Artifact
+#   勾上 = 另外建 Release（recovery.img + sha256 + 刷入说明）
+# 另外两个开关：先 repo sync、以及是否同时把产物推回设备树。
+
+name: OrangeFox recovery build
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: '发布到 Releases'
+        type: boolean
+        default: false
+      sync_first:
+        description: '编译前先 repo sync'
+        type: boolean
+        default: false
+      fox_dir:
+        description: '源码树绝对路径'
+        type: string
+        default: '/home/lenovo/fox'
+      jobs:
+        description: '并行数'
+        type: string
+        default: '8'
+      release_tag:
+        description: '发布 tag（留空自动生成 ofox-d1x-日期-时间）'
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  RECOVERY_PARTITION: 67633152
+  LUNCH_TARGET: twrp_d1x-eng
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 720
+
+    steps:
+      - name: Preflight
+        run: |
+          set -eu
+          FOX="${{ inputs.fox_dir }}"
+          FOX="${FOX:-/home/lenovo/fox}"
+          {
+            echo "### 开关状态"
+            echo ""
+            echo "| 开关 | 值 |"
+            echo "| --- | --- |"
+            echo "| 发布到 Releases | ${{ inputs.publish }} |"
+            echo "| 先 repo sync | ${{ inputs.sync_first }} |"
+            echo "| 源码树 | $FOX |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test -d "$FOX/.repo" || { echo "::error::$FOX 里没有 .repo，先 repo sync"; exit 1; }
+          test -f "$FOX/device/samsung/d1x/BoardConfig.mk" || { echo "::error::缺 device/samsung/d1x"; exit 1; }
+          test -f "$FOX/device/samsung/exynos9820-common/BoardConfigCommon.mk" || { echo "::error::缺 exynos9820-common"; exit 1; }
+          test -f "$FOX/device/samsung/d1x/prebuilt/Image" || { echo "::error::缺 prebuilt/Image"; exit 1; }
+          test -f "$FOX/device/samsung/d1x/prebuilt/dtbo.img" || { echo "::error::缺 prebuilt/dtbo.img"; exit 1; }
+          ls -l "$FOX/device/samsung/d1x/prebuilt/"
+          echo "Image 字节: $(stat -c%s "$FOX/device/samsung/d1x/prebuilt/Image")"
+          df -h "$FOX" | tail -1
+
+      - name: Sync（开关打开才跑）
+        if: ${{ inputs.sync_first }}
+        run: |
+          set -eu
+          cd "${{ inputs.fox_dir }}"
+          repo sync -c -j"${{ inputs.jobs }}" --force-sync --no-clone-bundle --no-tags
+
+      - name: Build recovery.img
+        run: |
+          set -eu
+          cd "${{ inputs.fox_dir }}"
+          source build/envsetup.sh
+          lunch "$LUNCH_TARGET"
+          mka recoveryimage -j"${{ inputs.jobs }}" 2>&1 | tee /tmp/ofof-build.log
+
+      - name: Verify partition fit
+        run: |
+          set -eu
+          OUT="${{ inputs.fox_dir }}/out/target/product/d1x/recovery.img"
+          test -f "$OUT" || { echo "::error::没有 recovery.img 产物"; tail -n 60 /tmp/ofof-build.log; exit 1; }
+          BYTES=$(stat -c%s "$OUT")
+          {
+            echo "### recovery.img"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 产物字节 | $BYTES |"
+            echo "| 分区上限 | $RECOVERY_PARTITION |"
+            echo "| 余量字节 | $(( RECOVERY_PARTITION - BYTES )) |"
+            echo "| sha256 | \`$(sha256sum "$OUT" | cut -d' ' -f1)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BYTES" -gt "$RECOVERY_PARTITION" ]; then
+            echo "::error::recovery.img 超出分区 $(( BYTES - RECOVERY_PARTITION )) 字节，换小 Image 或裁 dtbo"
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$OUT" dist/recovery.img
+          ( cd dist && sha256sum recovery.img > recovery.img.sha256 )
+
+      - name: Upload artifact
+        if: always() && hashFiles('dist/recovery.img') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-d1x
+          path: dist/*
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish release（开关打开才跑）
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          TAG="${{ inputs.release_tag }}"
+          [ -n "$TAG" ] || TAG="ofox-d1x-$(date -u +%Y%m%d-%H%M)"
+          BYTES=$(stat -c%s dist/recovery.img)
+          IMG_BYTES=$(stat -c%s "${{ inputs.fox_dir }}/device/samsung/d1x/prebuilt/Image")
+          {
+            echo "# OrangeFox R12.0 · d1x · $TAG"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| recovery.img 字节 | $BYTES |"
+            echo "| 分区上限 | 67633152 |"
+            echo "| prebuilt Image 字节 | $IMG_BYTES |"
+            echo "| sha256 | \`$(cut -d' ' -f1 dist/recovery.img.sha256)\` |"
+            echo ""
+            echo "## 刷入"
+            echo ""
+            echo '```'
+            echo "fastboot flash recovery recovery.img"
+            echo '```'
+          } > dist/NOTES.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/recovery.img dist/recovery.img.sha256 --clobber
+            gh release edit "$TAG" --notes-file dist/NOTES.md
+          else
+            gh release create "$TAG" dist/recovery.img dist/recovery.img.sha256 \
+              --target "${{ github.ref_name }}" \
+              --title "OrangeFox R12.0 d1x $TAG" \
+              --notes-file dist/NOTES.md
+          fi
+          echo "发布地址：${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skipped publishing
+        if: ${{ !inputs.publish }}
+        run: echo "发布开关关闭，只留 Artifact，没有建 Release。" >> "$GITHUB_STEP_SUMMARY"
