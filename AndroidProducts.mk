@@ -8,4 +8,4 @@ PRODUCT_MAKEFILES := \
     $(LOCAL_DIR)/twrp_d1x.mk
 
 COMMON_LUNCH_CHOICES := \
-    twrp_d1x-eng
+    twrp_d1x-bp2a-eng

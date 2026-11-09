@@ -1,0 +1,121 @@
+name: 构建 OrangeFox fox_16.0 (d1x)
+run-name: Build fox_16.0 by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否发布到 Release？'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 420
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+            zlib1g-dev libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
+            python3 python-is-python3 openjdk-17-jdk ccache aria2 xmlstarlet repo
+
+      - name: Set up ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-fox160-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-fox160-
+
+      - name: Init and Sync Repo (OrangeFox fox_16.0)
+        run: |
+          git clone https://gitlab.com/OrangeFox/sync.git ~/OrangeFox_sync
+          cd ~/OrangeFox_sync/sync
+          chmod +x orangefox_sync.sh
+          # v030+ 支持直接同步 fox_16.0 完整 manifest
+          ./orangefox_sync.sh --branch 16.0 --path ~/fox_16.0
+
+      - name: Clone Device Trees
+        run: |
+          cd ~/fox_16.0
+          mkdir -p device/samsung
+          # 本次 workflow 所属仓库即设备树本体，直接拷入（禁止在此覆盖任何 mk 文件）
+          cp -r "$GITHUB_WORKSPACE" device/samsung/d1x
+          rm -rf device/samsung/d1x/.git
+          # 公共树
+          git clone -b fox_16.0 --depth=1 \
+            https://github.com/mcajun87/android_device_samsung_exynos9820-common.git \
+            device/samsung/exynos9820-common
+
+      - name: Build Recovery
+        run: |
+          cd ~/fox_16.0
+
+          export FOX_BUILD_DEVICE=d1x
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+
+          source build/envsetup.sh
+          lunch twrp_d1x-bp2a-eng
+
+          # 关键：A16 必须显式导出 TARGET_RELEASE。
+          # 若为空，make 会回落到 release_config.mk 的 trunk_staging 兜底值，
+          # 而上游 android-16.0.0_r1 并无 trunk_staging.textproto，导致
+          # "release-config failed to run / panic: Missing config trunk_staging"。
+          export TARGET_PRODUCT=twrp_d1x
+          export TARGET_RELEASE=bp2a
+          export TARGET_BUILD_VARIANT=eng
+
+          mka adbd recoveryimage -j$(nproc)
+
+      - name: Package to Odin Tar
+        run: |
+          cd ~/fox_16.0/out/target/product/d1x
+          test -f recovery.img || { echo "recovery.img 未生成，构建失败"; exit 1; }
+          ls -l recovery.img
+          echo "分区上限: 67633152 字节"
+          tar -cf recovery.tar recovery.img
+          md5sum recovery.tar > recovery.tar.md5
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-fox_16.0-d1x-Recovery
+          path: |
+            ~/fox_16.0/out/target/product/d1x/recovery.img
+            ~/fox_16.0/out/target/product/d1x/recovery.tar
+            ~/fox_16.0/out/target/product/d1x/recovery.tar.md5
+          if-no-files-found: error
+
+      - name: Publish Release
+        if: github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OrangeFox-fox_16.0-d1x-${{ github.run_id }}
+          tag_name: fox_16.0-${{ github.run_id }}
+          files: |
+            ~/fox_16.0/out/target/product/d1x/recovery.img
+            ~/fox_16.0/out/target/product/d1x/recovery.tar
+            ~/fox_16.0/out/target/product/d1x/recovery.tar.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

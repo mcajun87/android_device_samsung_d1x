@@ -167,6 +167,12 @@ jobs:
 
           echo ""
           echo "=== 步骤 2/4: lunch $LUNCH_TARGET ==="
+          # A16 必须显式导出 TARGET_RELEASE，否则 make 会回落到
+          # release_config.mk 的 trunk_staging 兜底值，而上游 android-16.0.0_r1
+          # 没有 trunk_staging.textproto，会 panic: Missing config trunk_staging
+          export TARGET_PRODUCT=twrp_d1x
+          export TARGET_RELEASE=bp2a
+          export TARGET_BUILD_VARIANT=eng
           lunch "$LUNCH_TARGET"
           echo "lunch OK"
 

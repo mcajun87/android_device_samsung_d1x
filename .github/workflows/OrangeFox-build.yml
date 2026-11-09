@@ -42,7 +42,7 @@ permissions:
 
 env:
   RECOVERY_PARTITION: 67633152
-  LUNCH_TARGET: twrp_d1x-eng
+  LUNCH_TARGET: twrp_d1x-bp2a-eng
 
 jobs:
   build:
@@ -134,6 +134,12 @@ jobs:
           set -eu
           cd "$FOX"
           source build/envsetup.sh
+          # A16 必须显式导出 TARGET_RELEASE，否则 make 会回落到
+          # release_config.mk 的 trunk_staging 兜底值，而上游 android-16.0.0_r1
+          # 没有 trunk_staging.textproto，会 panic: Missing config trunk_staging
+          export TARGET_PRODUCT=twrp_d1x
+          export TARGET_RELEASE=bp2a
+          export TARGET_BUILD_VARIANT=eng
           lunch "$LUNCH_TARGET"
           mka recoveryimage -j"${{ inputs.jobs }}" 2>&1 | tee /tmp/ofof-build.log
 

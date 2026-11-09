@@ -14,3 +14,6 @@ PRODUCT_NAME := twrp_d1x
 PRODUCT_BRAND := samsung
 PRODUCT_MODEL := SM-N971N
 PRODUCT_MANUFACTURER := samsung
+
+# 让刷机包校验设备代号（与 vendorsetup.sh 的 FOX_TARGET_DEVICES 保持一致）
+TARGET_OTA_ASSERT_DEVICE := d1x,d1xks

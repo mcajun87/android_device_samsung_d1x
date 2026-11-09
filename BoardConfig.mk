@@ -6,37 +6,36 @@
 
 DEVICE_PATH := device/samsung/d1x
 
-# 引入公共树配置（必须放在最前面，以便下面覆盖它）
+# 公共树必须最先引入，下面的设备专属项才会覆盖它
 include device/samsung/exynos9820-common/BoardConfigCommon.mk
 
-# 修正上游的拼写，与 crDroid 13 保持一致
+# =========================================================
+# d1x = Galaxy Note10 5G（SM-N971N）
+# 注意：本机 SoC 是 Exynos 9825，不是 9820；common 树沿用
+# exynos9820 家族命名（S10 = 9820 / Note10 = 9825 共用）
+# =========================================================
 TARGET_BOOTLOADER_BOARD_NAME := universal9825
 TARGET_BOARD_PLATFORM := universal9825
 
-# 屏幕状态栏高度（保留原版设定）
+# 屏幕 1080x2280，状态栏高度
 OF_STATUS_H := 90
 
 # =========================================================
-# 以下为追加的覆盖项，用于适配 fox_16.0 和 crDroid 13
+# super 分区（retrofit 布局：元数据落在 system 上）
+# 数值沿用原树，仅 super 镜像构建时才被消费；recovery 单镜像构建不依赖
 # =========================================================
-
-# 强制平台版本为 16（OrangeFox fox_16.0）
-PLATFORM_VERSION := 16
-PLATFORM_SECURITY_PATCH := 2099-12-31
-
-# 明确预编译内核路径
-TARGET_PREBUILT_KERNEL := $(DEVICE_PATH)/prebuilt/Image
-BOARD_PREBUILT_DTBOIMAGE := $(DEVICE_PATH)/prebuilt/dtbo.img
-BOARD_INCLUDE_RECOVERY_DTBO := true
-
-# 确保 boot header 版本为 1（d1x 必须）
-BOARD_MKBOOTIMG_ARGS += --header_version 1
-
-# 强制覆盖 retrofit 动态分区核心参数（防止公共树里没写对）
 BOARD_SUPER_PARTITION_SIZE := 6480199680
 BOARD_SUPER_PARTITION_METADATA_DEVICE := system
-BOARD_SAMSUNG_DYNAMIC_PARTITIONS_SIZE := 6476005376
-BOARD_USES_METADATA_PARTITION := true
 
-# 必须开启 LZMA 压缩，否则内核+ramdisk 会超出 recovery 分区大小
-LZMA_RAMDISK_TARGETS := recovery
+# =========================================================
+# 以下全部由 exynos9820-common/BoardConfigCommon.mk 统一提供，此处不再重复：
+#   内核与 dtb : TARGET_PREBUILT_KERNEL / BOARD_PREBUILT_DTBOIMAGE
+#                BOARD_INCLUDE_RECOVERY_DTBO / BOARD_BOOTIMG_HEADER_VERSION
+#                BOARD_BOOT_HEADER_VERSION / BOARD_MKBOOTIMG_ARGS
+#   分区大小   : BOARD_RECOVERYIMAGE_PARTITION_SIZE / BOARD_DTBOIMG_PARTITION_SIZE
+#   压缩       : LZMA_RAMDISK_TARGETS / OF_USE_LZMA_COMPRESSION
+#   加密       : TW_INCLUDE_CRYPTO / *_FBE / TW_USE_FSCRYPT_POLICY
+#   语言       : TW_DEFAULT_LANGUAGE=zh_CN / TW_EXTRA_LANGUAGES
+#   其余       : BOARD_USES_METADATA_PARTITION / PLATFORM_SECURITY_PATCH
+# 原先这里重复定义会造成"双份真相"，改一处漏一处。
+# =========================================================
