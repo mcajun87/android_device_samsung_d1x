@@ -1,4 +1,4 @@
-name: 构建 OrangeFox fox_16.0 (d1x)
+name: 构建 fox_16.0（GitHub 云端 runner）
 run-name: Build fox_16.0 by ${{ github.actor }}
 
 on:

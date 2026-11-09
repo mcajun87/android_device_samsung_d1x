@@ -10,7 +10,7 @@
 #
 # 发布开关：面板里的「发布到 Releases」勾选框（type: boolean），默认不勾。
 
-name: OrangeFox recovery build
+name: OrangeFox recovery build（自建 runner / 本地树）
 
 on:
   workflow_dispatch:
