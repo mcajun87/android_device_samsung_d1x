@@ -14,16 +14,16 @@ Common tree: [android_device_samsung_exynos9820-common](https://github.com/mcaju
 
 | 文件 | 大小 | sha256 |
 | :-- | --: | :-- |
-| `prebuilt/Image` | 47,601,688 | `f3fffd7fe82ca51dab72a38b9cc042e72957418282b7b13f1e65bf6b53f735c5` |
+| `prebuilt/Image` | 49,455,128 | `8c4a3ca76afb333a9971f7b7ee048d920468d1f8063268112f8d5314e501a57d` |
 | `prebuilt/dtbo.img` | 974,848 | `7496fa80666c656dea105a6e72782e05b8fd3998f042bed2489c8789b5ea254d` |
 
 内核版本串（实测自 Image）：
 
-    Linux version 4.14.357-openela-g447fc3f99e1e-dirty (lenovo@DESKTOP-48KH18B)
-    built with Android clang 20.0.0 (r547379) + LLD 20.0.0   ← AOSP 16 官方工具链
-    #4 SMP PREEMPT Tue Nov 10 16:07:40 CST 2026
-    配置：CONFIG_CC_OPTIMIZE_FOR_SIZE=y (-Os)、CONFIG_LTO_NONE=y
-    体积：47,601,688 B（-O2 时为 49,059,864 B，超出分区预算，故改 -Os）
+    Linux version 4.14.357-openela-ga0e2ad468dd5
+    #39 SMP PREEMPT Sun Oct 25 18:36:26 CST 2026
+    来源：从 crDroid 17 官方 d1x recovery.img 中提取（该内核在本机实测可正常启动、
+          可完成 /data 元数据解密）。自编内核（lineage-24.0 + patches/0003）仍在
+          修三星专有驱动，暂不作为默认。
 
 `dtbo.img` 与 crDroid 17 官方 d1x recovery 内嵌的 recovery_dtbo **前 974,848 字节完全一致**，
 内含 5 个 DTB，首项为 `samsung,D1X KOR SINGLE 18` / `samsung,EXYNOS9825`。
@@ -42,6 +42,22 @@ Common tree: [android_device_samsung_exynos9820-common](https://github.com/mcaju
 
 详细取证与 patch 内容见 `patches/0003-kernel-gpu-dvfs-null-guard.md`。
 
+
+## boot 头部 os_version 必须与 ROM 一致（解密关键）
+
+S-Boot 会把 boot 镜像头部的 `os_version` 字段**直接交给 TEE 的 keymaster**
+（`tz_init_bootloader_info`），`resetprop` 改属性完全无效。ROM 是 Android 17
+而镜像头写 16 时，日志会是：
+
+```
+tz_init_bootloader_info:1066  os_version : 160000
+swd_configure:106           invalid os_version or os_patchlevel
+km_check_key_os_version_patchlevels  key_os_version(170000) > _os_version(160000)
+-> I:Unable to decrypt metadata encryption -> /data 挂不上
+```
+
+本树通过 `BOARD_MKBOOTIMG_ARGS += --os_version 17 --os_patch_level 2026-10-01`
+（追加在构建系统默认的 16 之后，mkbootimg 取最后一次的值）修正。
 
 ## 与其他 known-good 镜像的一致性（已实测比对）
 
