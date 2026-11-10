@@ -128,6 +128,22 @@ device/samsung/d1x/tools/make_recovery_image.sh ~/fox
 
 ---
 
+## 升级 / 重新编译
+
+| 场景 | 做法 |
+| :-- | :-- |
+| OrangeFox 上游更新 | `repo sync` 后按 README「构建」重新编译 |
+| 内核源码更新 | 见 [`docs/UPDATE.md`](docs/UPDATE.md) 第四节（fetch + rebase + 编 + 替换 prebuilt/Image） |
+| **ROM 升级（换安卓版本/安全补丁）** | **必须同步改 `--os_version` / `--os_patch_level`**，否则 `/data` 解密失效 |
+
+一键核对配置与 ROM / 内核 / 体积是否一致（只读）：
+
+```sh
+device/samsung/d1x/tools/check_versions.sh
+```
+
+详细流程与判断依据见 [`docs/UPDATE.md`](docs/UPDATE.md)。
+
 ## 内核说明
 
 `prebuilt/Image` 目前用的是 **crDroid 17 官方 d1x recovery 里的内核**
