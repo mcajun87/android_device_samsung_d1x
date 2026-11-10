@@ -14,17 +14,34 @@ Common tree: [android_device_samsung_exynos9820-common](https://github.com/mcaju
 
 | 文件 | 大小 | sha256 |
 | :-- | --: | :-- |
-| `prebuilt/Image` | 45,537,304 | `fd333f04509dbe3b1f93b4ecd9ed77954706a94d60681562b2c5801097942dcd` |
+| `prebuilt/Image` | 47,601,688 | `f3fffd7fe82ca51dab72a38b9cc042e72957418282b7b13f1e65bf6b53f735c5` |
 | `prebuilt/dtbo.img` | 974,848 | `7496fa80666c656dea105a6e72782e05b8fd3998f042bed2489c8789b5ea254d` |
 
 内核版本串（实测自 Image）：
 
-    Linux version 4.14.357-openela-gf0f25ac2812e
-    built with Android clang 22.0.2 (r596125, A17 官方工具链)
-    #1 SMP PREEMPT Thu Nov 5 08:58:51 UTC 2026
+    Linux version 4.14.357-openela-g447fc3f99e1e-dirty (lenovo@DESKTOP-48KH18B)
+    built with Android clang 20.0.0 (r547379) + LLD 20.0.0   ← AOSP 16 官方工具链
+    #4 SMP PREEMPT Tue Nov 10 16:07:40 CST 2026
+    配置：CONFIG_CC_OPTIMIZE_FOR_SIZE=y (-Os)、CONFIG_LTO_NONE=y
+    体积：47,601,688 B（-O2 时为 49,059,864 B，超出分区预算，故改 -Os）
 
 `dtbo.img` 与 crDroid 17 官方 d1x recovery 内嵌的 recovery_dtbo **前 974,848 字节完全一致**，
 内含 5 个 DTB，首项为 `samsung,D1X KOR SINGLE 18` / `samsung,EXYNOS9825`。
+
+## 内核源码与必需补丁
+
+`prebuilt/Image` 由
+[Rocky7842_android_kernel_samsung_exynos9820](https://github.com/mcajun87/Rocky7842_android_kernel_samsung_exynos9820)
+（分支 `lineage-24.0`，clang r547379，`-Os`）编译，**必须同时带上 `patches/0003` 的两处修复**，
+否则镜像能刷进去但进不了 recovery：
+
+| 修复 | 不修的后果 |
+| :-- | :-- |
+| `gpu_dvfs_get_step()` NULL 保护 | 开机 `Kernel panic`，卡 SAMSUNG logo 无限重启 |
+| `leds-s2mpb02.c` 恢复 `camera_class` | `/sys/class/camera/flash` 不存在，手电筒失效 |
+
+详细取证与 patch 内容见 `patches/0003-kernel-gpu-dvfs-null-guard.md`。
+
 
 ## 与其他 known-good 镜像的一致性（已实测比对）
 
@@ -38,14 +55,14 @@ Common tree: [android_device_samsung_exynos9820-common](https://github.com/mcaju
 | ramdisk offset / tags offset | `0x01000000` / `0x100` | 同 |
 | cmdline | `androidboot.super_partition=system` | `BOARD_KERNEL_CMDLINE ?= androidboot.super_partition=system` |
 | 分区大小 | 67,633,152 | `BOARD_RECOVERYIMAGE_PARTITION_SIZE ?= 67633152` |
-| AVB | 无 AVB footer | `BOARD_AVB_ENABLE` 未启用 |
+| AVB | 有 AVB footer；公钥 sha1 `2597c218aae470a130f61162feaae70afd97f011`、SHA256_RSA4096、rollback 1 @ 0、footer 1.0 | 同（`BOARD_AVB_*` 在 common 树） |
 
 ## 关键特性配置
 
 | 特性 | 配置 | 说明 |
 | :-- | :-- | :-- |
 | 解密（FBE + metadata） | `TW_INCLUDE_CRYPTO` / `TW_INCLUDE_CRYPTO_FBE` / `TW_INCLUDE_FBE_METADATA_DECRYPT` / `TW_USE_FSCRYPT_POLICY := 2` | Keymaster 版本 `OF_DEFAULT_KEYMASTER_VERSION := 4.0`；解密失败可依次试 4.1 → `TW_FORCE_KEYMASTER_VER := true` → `OF_NO_KEYMASTER_VER_4X := 1` |
-| 手电筒 | `OF_FLASHLIGHT_ENABLE := 1` + `OF_FL_PATH1 := /sys/class/camera/flash/rear_flash` | 内核含 s2mpb02 闪光灯驱动（`sensor-flash-s2mpb02`、`rear_flash`） |
+| 手电筒 | `OF_FLASHLIGHT_ENABLE := 1` + `OF_FL_PATH1 := /dev/fox_flash`（**目录**，不是节点） | rc 里建 `symlink /sys/class/camera/flash/rear_flash /dev/fox_flash/brightness`；内核的 `camera_class` 必须有效，见 `patches/0003` |
 | 时区 | `OF_DEFAULT_TIMEZONE := CST-8` | OrangeFox 用 POSIX TZ 串（不是 `Asia/Shanghai`）；源码默认是中欧时间，不覆盖会变欧洲时区 |
 | 语言 | `TW_DEFAULT_LANGUAGE := zh_CN` + `TW_EXTRA_LANGUAGES := true` | 默认简体中文；英文来自 `common/languages/en.xml`，繁体在 `extra-languages/` |
 | 分辨率 | `OF_SCREEN_H := 2280` + `TW_THEME := portrait_hdpi` | OrangeFox 只读高度；默认值是 1920，必须覆盖 |
