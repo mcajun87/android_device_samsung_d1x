@@ -9,6 +9,12 @@
 | 分支 | `fox_16.0`（AOSP 16 底座） |
 | lunch 目标 | `twrp_d1x-bp2a-eng` |
 
+> ⚠️ **这是自用配置，包含与出厂硬件不同的定制项**
+> （最重要的一条：**电池按自制 5000 mAh 电芯配置**，出厂是 3500 mAh）。
+> 换机器、换电池、换 ROM 版本之前请先读
+> [`docs/CUSTOMIZATIONS.md`](docs/CUSTOMIZATIONS.md)，里面写了每一项改在哪个文件、
+> 怎么改回去。
+
 > **本仓库只维护 d1x 一个型号。** 其他三星机型（beyond0lte / beyond1lte /
 > beyond2lte / beyondx / d1 / d2s / d2x / f62 等）不在维护范围内，
 > 相关配置与文档已全部移除。
