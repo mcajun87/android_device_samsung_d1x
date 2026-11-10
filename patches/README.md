@@ -16,3 +16,9 @@
 根治：`repo sync -c --no-tags --no-clone-bundle -j4 prebuilts/clang/host/linux-x86`
 
 临时对策：把该 md 里的片段追加到 `prebuilts/clang/host/linux-x86/Android.bp` 末尾。
+
+## 0002-ramdisk-size-trim.md
+
+recovery.img 超过 67,633,152 分区上限时的解决办法：精简语言（英文/简体/繁体）、
+以及**改动 ramdisk 内容后必须清空 `out/target/product/d1x/recovery/root` 暂存区**
+（不清空则改动不生效，这是踩过的坑）。同时列出"不能为了省空间而删"的配置项。
