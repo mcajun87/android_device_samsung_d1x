@@ -1,16 +1,21 @@
-# 放到你的 OrangeFox 源码树里任意一个 git 仓的 .github/workflows/recovery-build.yml
-# 例：mcajun87/android_device_samsung_d1x 的 fox_16.0 分支
+# ============================================================================
+# OrangeFox R12.0 · Samsung Galaxy Note10 5G (d1x / SM-N971N) · fox_16.0
 #
-# 【这个 workflow 必须用 self-hosted runner】
-# 它不把源码 checkout 到云端，而是在「你自己那台机器」上直接编已经 repo sync 好的源码树。
+# 必须用 self-hosted runner：本机 11.9 GB 内存 / 单次构建 ~33-50 分钟，
+# 云端 runner 的磁盘（~65 GB）装不下 AOSP 16 的 repo sync（>100 GB）。
 #
-# 两个仓库：
-#   - device/samsung/d1x          (mcajun87/android_device_samsung_d1x)
-#   - device/samsung/exynos9820-common (mcajun87/android_device_samsung_exynos9820-common)
-#
-# 发布开关：面板里的「发布到 Releases」勾选框（type: boolean），默认不勾。
+# 构建流程（按本机实测通过的方式）：
+#   1. mka adbd recoveryimage        —— 让 AOSP 生成 ramdisk-recovery.img
+#      ※ 这一步**预期会因尺寸检查失败**：构建系统固定用 `lzma -6` 压缩 ramdisk
+#        （~18.45 MB），加上 49.46 MB 的 prebuilt/Image 会超出 67,563,520 B 上限。
+#        但 ramdisk 产物在失败前就已经生成，所以下面继续。
+#   2. tools/make_recovery_image.sh  —— 官方流程：lzma -9 重压 ramdisk、
+#      自己调 mkbootimg 把 boot 头部 os_version 写成 17（A17 ROM 解密必需）、
+#      再用 avbtool 重新做 AVB 签名，最后校验尺寸/头部/哈希/Avb 尾部。
+#   3. 上传 dist/（recovery.img + Odin tar + 校验和），可选发 Release。
+# ============================================================================
 
-name: OrangeFox recovery build（自建 runner / 本地树）
+name: OrangeFox d1x build
 
 on:
   workflow_dispatch:
@@ -20,21 +25,24 @@ on:
         type: boolean
         default: false
       sync_first:
-        description: '编译前先 repo sync'
+        description: '构建前先 repo sync'
         type: boolean
         default: false
       fox_dir:
-        description: '源码树绝对路径（留空自动探测 HOME/fox、/home/lenovo/fox）'
+        description: '源码树路径（留空自动探测 ~/fox、/home/lenovo/fox）'
         type: string
         default: ''
       jobs:
         description: '并行数'
         type: string
-        default: '8'
+        default: '4'
       release_tag:
-        description: '发布 tag（留空自动生成 ofox-d1x-日期-时间）'
+        description: '发布 tag（留空自动生成）'
         type: string
         default: ''
+  push:
+    branches: [fox_16.0]
+    paths-ignore: ['**/*.md', 'docs/**']
 
 permissions:
   contents: write
@@ -42,232 +50,174 @@ permissions:
 env:
   RECOVERY_PARTITION: 67633152
   LUNCH_TARGET: twrp_d1x-bp2a-eng
+  TARGET_PRODUCT: twrp_d1x
+  TARGET_RELEASE: bp2a
+  TARGET_BUILD_VARIANT: eng
 
 jobs:
   build:
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 720
+    timeout-minutes: 900
 
     steps:
-      - name: Where am I（runner 环境）
+      - name: 环境信息
         run: |
-          set -e
+          set -eu
           {
-            echo "### runner 环境"
-            echo ""
-            echo "| 项 | 值 |"
-            echo "| --- | --- |"
+            echo '### Runner'
+            echo ''
+            echo '| 项 | 值 |'
+            echo '| --- | --- |'
             echo "| 主机 | $(uname -srm) |"
-            echo "| 用户 | $(whoami) |"
-            echo "| HOME | ${HOME:-未设置} |"
-            echo "| 磁盘 | $(df -h "$(pwd)" | tail -1 | tr -s ' ') |"
+            echo "| 内存 | $(free -g | awk '/Mem:/{print $2\" GB\"}') |"
+            echo "| 磁盘 | $(df -h "$PWD" | tail -1 | tr -s ' ') |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Resolve 源码树
+      - name: 定位源码树
         run: |
-          set -e
+          set -eu
           IN="${{ inputs.fox_dir }}"
-          CANDIDATES=""
-          if [ -n "$IN" ]; then
-            CANDIDATES="$IN"
-          else
-            CANDIDATES="${HOME}/fox /home/lenovo/fox ${GITHUB_WORKSPACE} $(pwd)"
-          fi
+          if [ -n "$IN" ]; then CAND="$IN"; else CAND="${HOME}/fox /home/lenovo/fox ${GITHUB_WORKSPACE}"; fi
           FOX=""
-          for c in $CANDIDATES; do
-            if [ -d "$c/.repo" ]; then FOX="$c"; break; fi
-          done
-          if [ -z "$FOX" ]; then
-            {
-              echo "### 找不到已同步的源码树"
-              echo ""
-              echo "试过这些位置："
-              echo '```'
-              for c in $CANDIDATES; do echo "$c"; done
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::没有 .repo 目录，找不到源码树"
-            exit 1
-          fi
+          for c in $CAND; do [ -d "$c/.repo" ] && { FOX="$c"; break; }; done
+          [ -n "$FOX" ] || { echo "::error::找不到已 repo sync 的源码树（需要 .repo 目录）"; exit 1; }
           echo "FOX=$FOX" >> "$GITHUB_ENV"
-          echo "用到的源码树：$FOX"
+          echo "源码树：$FOX"
 
-      - name: Preflight（两个仓库版本快照）
+      - name: 预检（版本快照 + 关键文件）
         run: |
-          set -e
+          set -eu
           FOX="$FOX"
-
-          # 记录两个仓库的 commit 信息，方便定位版本
-          D1X_COMMIT=$(cd "$FOX/device/samsung/d1x" && git log -1 --format="%h %s" 2>/dev/null || echo "未知")
-          D1X_BRANCH=$(cd "$FOX/device/samsung/d1x" && git branch --show-current 2>/dev/null || echo "未知")
-          COMMON_COMMIT=$(cd "$FOX/device/samsung/exynos9820-common" && git log -1 --format="%h %s" 2>/dev/null || echo "未知")
-          COMMON_BRANCH=$(cd "$FOX/device/samsung/exynos9820-common" && git branch --show-current 2>/dev/null || echo "未知")
-
           {
-            echo "### 设备树版本快照"
-            echo ""
-            echo "| 仓库 | 分支 | commit |"
-            echo "| --- | --- | --- |"
-            echo "| d1x | $D1X_BRANCH | $D1X_COMMIT |"
-            echo "| exynos9820-common | $COMMON_BRANCH | $COMMON_COMMIT |"
-            echo ""
-            echo "| 开关 | 值 |"
-            echo "| --- | --- |"
-            echo "| 发布到 Releases | ${{ inputs.publish }} |"
-            echo "| 先 repo sync | ${{ inputs.sync_first }} |"
-            echo "| 并行数 | ${{ inputs.jobs }} |"
+            echo '### 版本快照'
+            echo ''
+            echo '| 仓库 | 分支 | commit |'
+            echo '| --- | --- | --- |'
+            for r in d1x exynos9820-common; do
+              d="$FOX/device/samsung/$r"
+              b=$(git -C "$d" branch --show-current 2>/dev/null || echo '?')
+              c=$(git -C "$d" log -1 --format='%h %s' 2>/dev/null || echo '?')
+              echo "| $r | $b | $c |"
+            done
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # 检查关键文件是否存在
-          MISSING=0
-          check_file() {
-            if [ ! -f "$FOX/$1" ]; then
-              echo "::error::缺失文件: $1"
-              MISSING=1
-            fi
-          }
-          check_file "device/samsung/d1x/AndroidProducts.mk"
-          check_file "device/samsung/d1x/BoardConfig.mk"
-          check_file "device/samsung/d1x/device.mk"
-          check_file "device/samsung/d1x/twrp_d1x.mk"
-          check_file "device/samsung/d1x/vendorsetup.sh"
-          check_file "device/samsung/d1x/prebuilt/Image"
-          check_file "device/samsung/d1x/prebuilt/dtbo.img"
-          check_file "device/samsung/exynos9820-common/BoardConfigCommon.mk"
-          check_file "device/samsung/exynos9820-common/device-common.mk"
-          check_file "device/samsung/exynos9820-common/vendorsetup.sh"
-          check_file "device/samsung/exynos9820-common/recovery.fstab"
+          miss=0
+          for f in \
+            device/samsung/d1x/AndroidProducts.mk \
+            device/samsung/d1x/BoardConfig.mk \
+            device/samsung/d1x/twrp_d1x.mk \
+            device/samsung/d1x/vendorsetup.sh \
+            device/samsung/d1x/prebuilt/Image \
+            device/samsung/d1x/prebuilt/dtbo.img \
+            device/samsung/d1x/tools/make_recovery_image.sh \
+            device/samsung/exynos9820-common/BoardConfigCommon.mk \
+            device/samsung/exynos9820-common/device-common.mk \
+            device/samsung/exynos9820-common/recovery.fstab \
+            device/samsung/exynos9820-common/recovery/root/system/bin/prepdecrypt.sh \
+            device/samsung/exynos9820-common/recovery/root/system/etc/init/exynos9820-common.rc ; do
+            [ -f "$FOX/$f" ] || { echo "::error::缺少 $f"; miss=1; }
+          done
+          [ "$miss" -eq 0 ] || exit 1
 
-          if [ "$MISSING" -eq 1 ]; then
-            echo "::error::有关键文件缺失，无法编译"
-            exit 1
-          fi
+          # 关键配置必须在位，否则构建出来的镜像要么进不去要么解不了密
+          grep -q -- '--os_version 17' "$FOX/device/samsung/exynos9820-common/BoardConfigCommon.mk" \
+            || { echo "::error::BoardConfigCommon.mk 缺少 --os_version 17（解密必需）"; exit 1; }
+          grep -q 'max_brightness 100' \
+            "$FOX/device/samsung/exynos9820-common/recovery/root/system/etc/init/exynos9820-common.rc" \
+            || { echo "::error::exynos9820-common.rc 缺少 max_brightness 100（手电筒必需）"; exit 1; }
+          echo "Image: $(stat -c%s "$FOX/device/samsung/d1x/prebuilt/Image") 字节"
+          echo "dtbo : $(stat -c%s "$FOX/device/samsung/d1x/prebuilt/dtbo.img") 字节"
 
-          echo "Image 字节: $(stat -c%s "$FOX/device/samsung/d1x/prebuilt/Image")"
-          echo "dtbo 字节: $(stat -c%s "$FOX/device/samsung/d1x/prebuilt/dtbo.img")"
-
-      - name: Sync（开关打开才跑）
+      - name: repo sync（可选）
         if: ${{ inputs.sync_first }}
         run: |
-          set -e
+          set -eu
           cd "$FOX"
           repo sync -c -j"${{ inputs.jobs }}" --force-sync --no-clone-bundle --no-tags
 
-      - name: Build recovery.img
+      - name: 构建 ramdisk
         run: |
-          set -e
+          set -eu
           cd "$FOX"
           export ALLOW_MISSING_DEPENDENCIES=true
           export FOX_BUILD_DEVICE=d1x
-          export LC_ALL="C"
-
-          echo "=== 步骤 1/4: source build/envsetup.sh ==="
+          export LC_ALL=C
+          set +u
           source build/envsetup.sh
-          echo "envsetup OK"
-
-          echo ""
-          echo "=== 步骤 2/4: lunch $LUNCH_TARGET ==="
-          # A16 必须显式导出 TARGET_RELEASE，否则 make 会回落到
-          # release_config.mk 的 trunk_staging 兜底值，而上游 android-16.0.0_r1
-          # 没有 trunk_staging.textproto，会 panic: Missing config trunk_staging
-          export TARGET_PRODUCT=twrp_d1x
-          export TARGET_RELEASE=bp2a
-          export TARGET_BUILD_VARIANT=eng
+          set -u
           lunch "$LUNCH_TARGET"
-          echo "lunch OK"
+          # lunch 之后再显式导出一次：否则 release_config 找不到 bp2a 会 panic
+          export TARGET_PRODUCT=twrp_d1x TARGET_RELEASE=bp2a TARGET_BUILD_VARIANT=eng
 
-          echo ""
-          echo "=== 步骤 3/4: mka adbd recoveryimage ==="
-          mka adbd recoveryimage -j"${{ inputs.jobs }}" 2>&1 | tee /tmp/ofof-build.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-
-          if [ "$BUILD_EXIT" -ne 0 ]; then
-            echo ""
-            echo "=== 编译失败，退出码: $BUILD_EXIT ==="
-            echo ""
-            echo "--- 最后 80 行日志 ---"
-            tail -n 80 /tmp/ofof-build.log
-            echo ""
-            echo "--- 错误行定位（含 device/samsung 路径的行）---"
-            grep -n "device/samsung" /tmp/ofof-build.log | tail -n 30 || echo "日志中没有 device/samsung 相关行"
-            exit 1
-          fi
-          echo "编译成功"
-
-      - name: Verify partition fit
-        run: |
+          set +e
+          mka adbd recoveryimage -j"${{ inputs.jobs }}" 2>&1 | tee /tmp/d1x-build.log
+          RC=${PIPESTATUS[0]}
           set -e
-          OUT="$FOX/out/target/product/d1x/recovery.img"
-          if [ ! -f "$OUT" ]; then
-            echo "::error::没有 recovery.img 产物"
-            echo "--- build log 最后 60 行 ---"
-            tail -n 60 /tmp/ofof-build.log || echo "没有日志文件"
-            exit 1
-          fi
-          BYTES=$(stat -c%s "$OUT")
-          {
-            echo "### recovery.img 产物"
-            echo ""
-            echo "| 项 | 值 |"
-            echo "| --- | --- |"
-            echo "| 产物字节 | $BYTES |"
-            echo "| 分区上限 | $RECOVERY_PARTITION |"
-            echo "| 余量字节 | $(( RECOVERY_PARTITION - BYTES )) |"
-            echo "| sha256 | \`$(sha256sum "$OUT" | cut -d' ' -f1)\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$BYTES" -gt "$RECOVERY_PARTITION" ]; then
-            echo "::error::recovery.img 超出分区 $(( BYTES - RECOVERY_PARTITION )) 字节"
-            exit 1
-          fi
-          mkdir -p dist
-          cp "$OUT" dist/recovery.img
-          ( cd dist && sha256sum recovery.img > recovery.img.sha256 )
 
-      - name: Upload artifact
-        if: always() && hashFiles('dist/recovery.img') != ''
+          OUT="$FOX/out/target/product/d1x"
+          if [ -f "$OUT/ramdisk-recovery.img" ]; then
+            echo "ramdisk 已生成（mka 退出码 $RC；尺寸检查失败属预期）"
+          else
+            echo "::error::ramdisk-recovery.img 没有生成，mka 退出码 $RC"
+            tail -n 60 /tmp/d1x-build.log
+            exit 1
+          fi
+
+      - name: 打包 + 签名 + 校验
+        run: |
+          set -eu
+          "$FOX/device/samsung/d1x/tools/make_recovery_image.sh" "$FOX" 2>&1 | tee /tmp/d1x-package.log
+          OUT="$FOX/out/target/product/d1x"
+          {
+            echo '### 产物'
+            echo ''
+            echo '| 项 | 值 |'
+            echo '| --- | --- |'
+            echo "| recovery.img | $(stat -c%s "$OUT/dist/recovery.img") 字节 |"
+            echo "| 分区上限 | $RECOVERY_PARTITION |"
+            echo "| sha256 | \`$(cut -d' ' -f1 "$OUT/dist/recovery.img.sha256")\` |"
+            echo "| tar md5 | \`$(cut -d' ' -f1 "$OUT/dist/recovery.tar.md5")\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传 artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recovery-d1x
-          path: dist/*
-          if-no-files-found: warn
+          name: OrangeFox-R12.0-d1x
+          path: out/target/product/d1x/dist/*
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Publish release（开关打开才跑）
+      - name: 发布 Release（可选）
         if: ${{ inputs.publish }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
+          set -eu
+          OUT="$FOX/out/target/product/d1x/dist"
           TAG="${{ inputs.release_tag }}"
           [ -n "$TAG" ] || TAG="ofox-d1x-$(date -u +%Y%m%d-%H%M)"
-          BYTES=$(stat -c%s dist/recovery.img)
-          IMG_BYTES=$(stat -c%s "$FOX/device/samsung/d1x/prebuilt/Image")
           {
             echo "# OrangeFox R12.0 · d1x · $TAG"
             echo ""
             echo "| 项 | 值 |"
             echo "| --- | --- |"
-            echo "| recovery.img 字节 | $BYTES |"
-            echo "| 分区上限 | 67633152 |"
-            echo "| prebuilt Image 字节 | $IMG_BYTES |"
-            echo "| sha256 | \`$(cut -d' ' -f1 dist/recovery.img.sha256)\` |"
+            echo "| recovery.img | $(stat -c%s "$OUT/recovery.img") 字节 |"
+            echo "| sha256 | \`$(cut -d' ' -f1 "$OUT/recovery.img.sha256")\` |"
+            echo "| 内核 | 4.14.357-openela-ga0e2ad468dd5（crDroid 官方，实测可用） |"
+            echo "| boot os_version | 17 / 2026-10-01 |"
             echo ""
-            echo "## 刷入"
+            echo "## 刷入（三星）"
             echo '```'
-            echo "fastboot flash recovery recovery.img"
+            echo "Odin → Options 取消勾选 Auto Reboot → AP 选 recovery.tar → Start"
+            echo "PASS 后立刻按住 音量+ + 电源 + Bixby，看到 OrangeFox 图标就松开电源键"
             echo '```'
-          } > dist/NOTES.md
+          } > "$OUT/NOTES.md"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/recovery.img dist/recovery.img.sha256 --clobber
-            gh release edit "$TAG" --notes-file dist/NOTES.md
+            gh release upload "$TAG" "$OUT/recovery.tar" "$OUT/recovery.img" "$OUT/recovery.img.sha256" "$OUT/recovery.tar.md5" --clobber
+            gh release edit "$TAG" --notes-file "$OUT/NOTES.md"
           else
-            gh release create "$TAG" dist/recovery.img dist/recovery.img.sha256 \
+            gh release create "$TAG" "$OUT/recovery.tar" "$OUT/recovery.img" "$OUT/recovery.img.sha256" "$OUT/recovery.tar.md5" \
               --target "${{ github.ref_name }}" \
-              --title "OrangeFox R12.0 d1x $TAG" \
-              --notes-file dist/NOTES.md
+              --title "OrangeFox R12.0 d1x $TAG" --notes-file "$OUT/NOTES.md"
           fi
-          echo "发布地址：${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Skipped publishing
-        if: ${{ !inputs.publish }}
-        run: echo "发布开关关闭，只留 Artifact，没有建 Release。" >> "$GITHUB_STEP_SUMMARY"

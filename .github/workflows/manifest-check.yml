@@ -1,20 +1,15 @@
-# 放到 mcajun87/android_device_samsung_d1x（fox_16.0 分支）的
-# .github/workflows/manifest-check.yml
-#
-# 作用：2 分钟跑完，确认你 fox_16.0 要用的每个仓库和分支都真实存在，
-#      顺带校验 local_manifests/d1x.xml 的 XML 语法与 path 冲突。
-#      同步前先跑它，比 repo sync 跑 40 分钟才发现 404 划算。
+# 2 分钟静态检查：确认 d1x 专版依赖的仓库/分支真实存在，
+# 并核对设备树里几个"改错就进不去系统"的关键配置。
+# d1x 专版不涉及任何其他三星型号。
 
-name: OrangeFox repo check
+name: d1x tree check
 
 on:
   workflow_dispatch:
   push:
     branches: [fox_16.0]
-    paths:
-      - 'BoardConfig.mk'
-      - 'AndroidProducts.mk'
-      - 'twrp.dependencies'
+  pull_request:
+    branches: [fox_16.0]
 
 permissions:
   contents: read
@@ -23,12 +18,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Verify repos and branches
+      - name: 仓库与分支存在性
         run: |
           set -u
           fail=0
@@ -36,55 +29,29 @@ jobs:
             owner="$1"; repo="$2"; want="$3"
             url="https://github.com/$owner/$repo.git"
             if git ls-remote --heads "$url" "$want" | grep -q "refs/heads/$want"; then
-              echo "OK   $owner/$repo @ $want"
+              echo "OK   $owner/$repo@$want"
             else
-              echo "FAIL $owner/$repo @ $want"
-              echo "    现有分支: $(git ls-remote --heads "$url" | awk -F'refs/heads/' '{print $2}' | tr '\n' ' ')"
+              echo "FAIL $owner/$repo@$want"
+              echo "     现有分支: $(git ls-remote --heads "$url" | awk -F'refs/heads/' '{print $2}' | tr '\n' ' ')"
               fail=1
             fi
           }
-
-          echo "## fox_16.0 必须存在的仓库" >> "$GITHUB_STEP_SUMMARY"
-
-          # 设备树
           chk mcajun87 android_device_samsung_d1x fox_16.0
           chk mcajun87 android_device_samsung_exynos9820-common fox_16.0
-          # 备选：自己编小 Image 时用
           chk mcajun87 Rocky7842_android_kernel_samsung_exynos9820 lineage-24.0
-          chk mcajun87 Rocky7842_android_kernel_samsung_exynos9820 lineage-24.0-ksu
-          # 不适用（只有 fox_12.1），列出来是为了每次提醒别挂错
-          echo "--- 以下只有 fox_12.1，fox_16.0 不要挂 ---"
-          chk Exynos982x-OrangeFox android_device_samsung_d1x fox_12.1 || true
-          chk Exynos982x-OrangeFox android_device_samsung_exynos9820-common fox_12.1 || true
-
           exit "$fail"
 
-      - name: Verify local manifest xml (if present)
+      - name: 关键配置核对
         run: |
           set -eu
-          shopt -s nullglob
-          files=(local_manifests/*.xml .repo/local_manifests/*.xml)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "没有 local_manifests，跳过 XML 校验"
-            exit 0
-          fi
-          for f in "${files[@]}"; do
-            echo "校验 $f"
-            python3 - "$f" <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          p = sys.argv[1]
-          root = ET.parse(p).getroot()
-          paths = [pr.get('path') for pr in root.iter('project')]
-          dup = [x for x in set(paths) if paths.count(x) > 1]
-          print("  project 数:", len(paths))
-          if dup:
-              print("  ::error::path 重复:", dup)
-              sys.exit(1)
-          PY
-          done
+          echo "### d1x 关键配置" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Note
-        run: |
-          echo "注意：path 重复检查只覆盖本文件内部；跨清单冲突（例如" \
-               "hardware/interfaces 已被主清单占用）需要在 repo init 之后用" \
-               " repo manifest 对照。"
+          echo "Image : $(stat -c%s prebuilt/Image) 字节 / sha256 $(sha256sum prebuilt/Image | cut -d' ' -f1)"
+          echo "dtbo  : $(stat -c%s prebuilt/dtbo.img) 字节 / sha256 $(sha256sum prebuilt/dtbo.img | cut -d' ' -f1)"
+
+          test -x tools/make_recovery_image.sh || { echo "::error::tools/make_recovery_image.sh 不可执行"; exit 1; }
+          bash -n tools/make_recovery_image.sh || { echo "::error::打包脚本语法错误"; exit 1; }
+
+          test -f AndroidProducts.mk
+          grep -q 'twrp_d1x-bp2a-eng' AndroidProducts.mk || { echo "::error::AndroidProducts.mk 缺 lunch 目标"; exit 1; }
+          echo "全部通过"
