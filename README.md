@@ -51,19 +51,21 @@
 
 | 项目 | 值 / 结论 |
 | :-- | :-- |
-| `prebuilt/Image` | 49,455,128 B，sha256 `8c4a3ca76afb333a9971f7b7ee048d920468d1f8063268112f8d5314e501a57d`<br>来源：crDroid 17 官方 d1x recovery 里的内核 `4.14.357-openela-ga0e2ad468dd5`（实测可启动、可解密） |
+| `prebuilt/Image` | **49,059,864 B**，sha256 `a5620554ac3da87b007e3d4840899fb3431a8049c90d6ddf21c9b18e1243c3c7`<br>来源：本树自编 `-O2` 内核 `4.14.357-openela-ga04af158fa02 #8`（实测可启动、可解密）<br>历史：曾用 crDroid 17 官方内核 49,455,128 B / `8c4a3ca7…`（同样可用，现留在 `prebuilt/Image.bak_prev_*`） |
 | `prebuilt/dtbo.img` | 974,848 B，sha256 `7496fa80666c656dea105a6e72782e05b8fd3998f042bed2489c8789b5ea254d`<br>与 crDroid 官方 recovery 内嵌的 `recovery_dtbo` 逐字节一致 |
 | recovery 分区 | **67,633,152 B**（所有体积计算的天花板） |
 | boot 头部 | header v1 / page 2048 / base `0x10000000` / kernel `+0x8000` / ramdisk `+0x01000000` / tags `+0x100` |
 | **boot 头部 os_version** | **必须是 17（patch 2026-10-01）**，否则 TEE keymaster 拒绝解封 `/data` 的元数据密钥 → `/data` 与 MTP 全废。详见公共树 README |
-| ramdisk 压缩 | 构建系统固定 `lzma -6`（≈18.45 MB），**必须用 `-9` 重压（≈16.60 MB）才塞得下** |
+| **AVB footer os_version** | **同样必须是 17（patch 2026-10-01）—— 这一条才是「能不能开机」的开关。** 三星 S-Boot 用 footer 里的 `com.android.build.boot.os_version` 做 rollback 判定，写成 16 会 LOGO 闪一下自动重启、橙狐画面进不去、adb 也连不上（v8 与 2026-11-14 那次失败都栽在这）。`BoardConfigCommon.mk` 里的 `BOOT_OS_VERSION := 17` **压不住** `build/make/core/Makefile:4779` 的 `?=`，构建时必须命令行覆盖：`make recoveryimage BOOT_OS_VERSION=17 BOOT_SECURITY_PATCH=2026-10-01`。核验：`avbtool info_image --image recovery.img \| grep boot.os_version` |
+| ramdisk 压缩 | **最阴的坑。** 构建系统的 `COMPRESSION_COMMAND` 是 `prebuilts/tools-lineage/linux-x86/bin/lzma -f -c -9`，那个 `lzma` 是 LZMA SDK 9.22，**它的 `-9` 只有 32 MiB 字典**，压出来 **17,012,716 B > 16 MiB**，刷进去同样是 LOGO 闪一下自动重启。必须换成 `xz --format=lzma -9`（64 MiB 字典）→ **16,603,639 B** ✅；等价写法 `xz --format=lzma --lzma1=preset=9,dict=64MiB`。<br>**判据**：LZMA 头第 5 字节 `04`=64 MiB ✓ / `02`=32 MiB ✗；体积必须 < 16,777,216 |
 | 手电筒节点 | 用三星私有 `/sys/class/camera/flash/rear_flash`（写入 `100`），**不能用** `/sys/class/leds/torch-sec1`（写了不亮） |
 
 ### 体积预算
 
 ```
-2048(页) + 49,455,128(内核) + 16,599,792(ramdisk, lzma -9) + 974,848(dtbo) = 67,031,816
-上限 67,633,152 - 69,632(AVB footer) = 67,563,520    余量 531,704
+2048(页) + 49,061,888(内核对齐后) + 16,603,136(ramdisk 对齐后) + 974,848(dtbo) = 66,641,920
+分区 67,633,152；AVB vbmeta 2,432 B 与 footer 也要落在里面 → 内容上限约 67,630,656
+实测余量 = 67,633,152 − 66,641,920 = 991,232
 ```
 
 ---
